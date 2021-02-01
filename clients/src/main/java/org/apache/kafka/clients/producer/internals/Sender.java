@@ -121,6 +121,8 @@ public class Sender implements Runnable {
         log.debug("Starting Kafka producer I/O thread.");
 
         // main loop, runs until close is called
+        // 其实代码就是一个死循环，然后一直在运行。
+        // 所以我们要知道sender线程启动起来一以后是一直在运行的。
         while (running) {
             try {
                 run(time.milliseconds());
@@ -162,6 +164,17 @@ public class Sender implements Runnable {
      *            The current POSIX time in milliseconds
      */
     void run(long now) {
+
+        //获取元数据
+        //因为我们是根据场景驱动的方式，目前是我们第一次代码进来，
+        //目前还没有获取到元数据
+        //所以这个cluster里面是没有元数据
+        //如果这儿没有元数据的话，这个方法里面接下来的代码就不用看了
+        //是以为接下来的这些代码依赖这个元数据。
+        //TODO 我们直接看这个方法的最后一行代码
+        //就是这行代码去拉取的元数据。
+
+
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);

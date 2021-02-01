@@ -165,42 +165,57 @@ public final class RecordAccumulator {
                                      long maxTimeToBlock) throws InterruptedException {
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
+        // 统计正在向RecordAccumulator中追加数据的线程数
         appendsInProgress.incrementAndGet();
         try {
             // check if we have an in-progress batch
+            // 步骤1：查找TopicPartition对应的Deque
             Deque<RecordBatch> dq = getOrCreateDeque(tp);
+            // 同步操作，以Deque为锁
             synchronized (dq) {
+                // 检查生产者是否已经关闭了
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
+                // 使用tryAppend()方法向Deque中最后一个RecordBatch追加Record
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null)
+                    // 返回值不为空说明添加成功，直接将返回值进行return
                     return appendResult;
             }
 
             // we don't have an in-progress record batch try to allocate a new batch
+            // 走到这里，说明可能没有正在接受Record的RecordBatch，需要分配一个新的RecordBatch
+            // 根据消息大小和batchSize，选择一个大的值作为RecordBatch底层ByteBuffer的大小
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
+            // 使用BufferPool缓存池分配ByteBuffer空间
             ByteBuffer buffer = free.allocate(size, maxTimeToBlock);
             synchronized (dq) {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
-
+                // 再次使用tryAppend()方法向Deque中最后一个RecordBatch追加Record
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
+                    // 追加成功，释放buffer给BufferPool
                     free.deallocate(buffer);
                     return appendResult;
                 }
+                // 走到这里说明追加失败
+                // 创建一个MemoryRecords
                 MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(buffer, compression, TimestampType.CREATE_TIME, this.batchSize);
+                // 使用传入的TopicPartition参数和records新创建一个RecordBatch
                 RecordBatch batch = new RecordBatch(tp, recordsBuilder, time.milliseconds());
+                // 使用新创建的batch再次尝试
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
-
+                // 将新创建的RecordBatch添加到dp及incomplete中
                 dq.addLast(batch);
                 incomplete.add(batch);
                 return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true);
             }
         } finally {
+            // 将记录正在追加消息的线程数的计数器减1
             appendsInProgress.decrementAndGet();
         }
     }
@@ -210,14 +225,19 @@ public final class RecordAccumulator {
      * resources (like compression streams buffers).
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
+        // 获取deque中最后一个RecordBatch
         RecordBatch last = deque.peekLast();
         if (last != null) {
+            // 向last中添加消息，获得返回值future
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
+                // 如果返回的future为空，表示该RecordBatch已经没有足够的空间了，将该RecordBatch的MemoryRecords对象关闭
                 last.close();
             else
+                // 如果返回有值，说明添加成功，直接返回包装对象RecordAppendResult
                 return new RecordAppendResult(future, deque.size() > 1 || last.isFull(), false);
         }
+        // 如果last为空，说明deque为空，直接返回null
         return null;
     }
 

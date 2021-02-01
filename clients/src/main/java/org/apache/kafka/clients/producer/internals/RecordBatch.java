@@ -69,19 +69,27 @@ public final class RecordBatch {
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
+        // 估算剩余空间是否足够
         if (!recordsBuilder.hasRoomFor(key, value)) {
             return null;
         } else {
+            // 向MemoryRecords中添加数据，offsetCounter是在RecordBatch中的偏移量
             long checksum = this.recordsBuilder.append(timestamp, key, value);
+            // 记录最大消息大小的字节数，这个值会不断更新，始终记录已添加的消息记录中最大的那条的大小
             this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
+            // 更新最近添加时间
             this.lastAppendTime = now;
+            // 将消息构造一个FutureRecordMetadata对象
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
                                                                    timestamp, checksum,
                                                                    key == null ? -1 : key.length,
                                                                    value == null ? -1 : value.length);
+            // 如果callback不会空，就将上面得到的FutureRecordMetadata和该callback包装为一个thunk，放到thunks集合里
             if (callback != null)
                 thunks.add(new Thunk(callback, future));
+            // 更新保存的记录数量
             this.recordCount++;
+            // 返回FutureRecordMetadata对象
             return future;
         }
     }

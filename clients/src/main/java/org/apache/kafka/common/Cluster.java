@@ -30,13 +30,20 @@ import java.util.Set;
 public final class Cluster {
 
     private final boolean isBootstrapConfigured;
+    // Kafka集群中的broker节点集合
     private final List<Node> nodes;
+    // 未授权的主题集合
     private final Set<String> unauthorizedTopics;
+    // 内置的 topic 列表
     private final Set<String> internalTopics;
-    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
     private final Map<String, List<PartitionInfo>> partitionsByTopic;
+    // topic对应的partition信息字典，键为topic名称，值为partition信息集合；存放的partition不一定有Leader副本
+    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
+    // topic中可用的partition信息字典，键为topic名称，值为可用的partition信息集合；存放的partition必须是有Leader副本的Partition
     private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
+    // broker对应的partition信息字典，键为broker的id，值为partition信息集合
     private final Map<Integer, List<PartitionInfo>> partitionsByNode;
+    // broker对应的Node信息字典，键为broker的id，值为表示该节点的Node实例
     private final Map<Integer, Node> nodesById;
     private final ClusterResource clusterResource;
 

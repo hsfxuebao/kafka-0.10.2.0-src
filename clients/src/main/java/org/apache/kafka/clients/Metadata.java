@@ -43,25 +43,44 @@ import java.util.Set;
  * is removed from the metadata refresh set after an update. Consumers disable topic expiry since they explicitly
  * manage topics while producers rely on topic expiry to limit the refresh set.
  */
+
+// 这个类被 client 线程和后台 sender 所共享,它只保存了所有 topic 的部分数据,当我们请求一个它上面没有的 topic meta 时,
+// 它会通过发送 metadata update 来更新 meta 信息,
+// 如果 topic meta 过期策略是允许的,那么任何 topic 过期的话都会被从集合中移除,
+// 但是 consumer 是不允许 topic 过期的因为它明确地知道它需要管理哪些 topic
 public final class Metadata {
 
     private static final Logger log = LoggerFactory.getLogger(Metadata.class);
 
     public static final long TOPIC_EXPIRY_MS = 5 * 60 * 1000;
     private static final long TOPIC_EXPIRY_NEEDS_UPDATE = -1L;
-
+    // 两次刷新元数据退避时间，避免频繁刷新导致性能消耗
     private final long refreshBackoffMs;
+    // 每隔多久更新一次，默认是300秒（metadata.max.age.ms）
     private final long metadataExpireMs;
+    // 集群元数据版本号，元数据更新成功一次，版本号就自增1
     private int version;
+    // 上一次更新元数据的时间戳
     private long lastRefreshMs;
+    /**
+     * 上一次成功更新元数据的时间戳，如果每次更新都成功，
+     * lastSuccessfulRefreshMs应该与lastRefreshMs相同，否则lastRefreshMs > lastSuccessfulRefreshMs
+     */
     private long lastSuccessfulRefreshMs;
+    // 记录kafka集群的元数据
     private Cluster cluster;
+    // 表示是否强制更新Cluster
     private boolean needUpdate;
     /* Topics with expiry time */
+    // 记录当前已知的所有的主题
     private final Map<String, Long> topics;
+    // 监听器集合，用于监听Metadata更新
     private final List<Listener> listeners;
+    // 当接收到 metadata 更新时, ClusterResourceListeners的列表
     private final ClusterResourceListeners clusterResourceListeners;
+    // 是否需要更新全部主题的元数据
     private boolean needMetadataForAllTopics;
+    // 默认为 true, Producer 会定时移除过期的 topic,consumer 则不会移除
     private final boolean topicExpiryEnabled;
 
     /**
@@ -121,7 +140,17 @@ public final class Metadata {
      * is now
      */
     public synchronized long timeToNextUpdate(long nowMs) {
+        /**
+         * 元数据是否过期，判断条件：
+         * 1. needUpdate被置为true
+         * 2. 上次更新时间距离当前时间已经超过了指定的元数据过期时间阈值metadataExpireMs（metadata.max.age.ms），默认是300秒
+         */
         long timeToExpire = needUpdate ? 0 : Math.max(this.lastSuccessfulRefreshMs + this.metadataExpireMs - nowMs, 0);
+        /**
+         * 允许更新的时间点，计算方式：
+         * 上次更新时间 + 退避时间 - 当前时间的间隔
+         * 即要求上次更新时间与当前时间的间隔不能大于退避时间，如果大于则需要等待
+         */
         long timeToAllowUpdate = this.lastRefreshMs + this.refreshBackoffMs - nowMs;
         return Math.max(timeToExpire, timeToAllowUpdate);
     }
@@ -130,8 +159,8 @@ public final class Metadata {
      * Request an update of the current cluster metadata info, return the current version before the update
      */
     public synchronized int requestUpdate() {
-        this.needUpdate = true;
-        return this.version;
+        this.needUpdate = true; // 设置为需要强制更新
+        return this.version; // 返回当前集群元数据的版本号
     }
 
     /**
@@ -151,10 +180,13 @@ public final class Metadata {
         }
         long begin = System.currentTimeMillis();
         long remainingWaitMs = maxWaitMs;
+        // 比较版本号。当Sender成功更新Metadata之后，version值会加1，否则会一直循环，直到超时
         while (this.version <= lastVersion) {
             if (remainingWaitMs != 0)
+                // 带有超时机制的线程wait
                 wait(remainingWaitMs);
             long elapsed = System.currentTimeMillis() - begin;
+            // 超时，抛出超时异常
             if (elapsed >= maxWaitMs)
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             remainingWaitMs = maxWaitMs - elapsed;
@@ -168,11 +200,14 @@ public final class Metadata {
      * @param topics
      */
     public synchronized void setTopics(Collection<String> topics) {
+        // 如果Metadata中已知的主题没有包含传入的主题，则需要更新Metadata元数据
         if (!this.topics.keySet().containsAll(topics)) {
             requestUpdateForNewTopics();
         }
+        // 清空原有的已知主题
         this.topics.clear();
         for (String topic : topics)
+            // 更新已知主题
             this.topics.put(topic, TOPIC_EXPIRY_NEEDS_UPDATE);
     }
 
@@ -202,10 +237,14 @@ public final class Metadata {
         this.needUpdate = false;
         this.lastRefreshMs = now;
         this.lastSuccessfulRefreshMs = now;
+        // 元数据版本 +1
         this.version += 1;
-
+        // 默认是true
         if (topicExpiryEnabled) {
             // Handle expiry of topics from the metadata refresh set.
+            // 场景驱动方式研究代码，第一次进来是在product初始化的时候
+            // 但是我们目前topics是空的
+            // 所以下面的代码是不会被运行的。
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, Long> entry = it.next();
                 long expireMs = entry.getValue();
@@ -217,7 +256,7 @@ public final class Metadata {
                 }
             }
         }
-
+        // 通知所有的监听器，数据要更新了
         for (Listener listener: listeners)
             listener.onMetadataUpdate(cluster);
 
@@ -239,7 +278,7 @@ public final class Metadata {
                 log.info("Cluster ID: {}", cluster.clusterResource().clusterId());
             clusterResourceListeners.onUpdate(cluster.clusterResource());
         }
-
+        // 唤醒等待Metadata更新完成的线程
         notifyAll();
         log.debug("Updated cluster metadata version {} to {}", this.version, this.cluster);
     }
@@ -249,6 +288,7 @@ public final class Metadata {
      * to avoid retrying immediately.
      */
     public synchronized void failedUpdate(long now) {
+        // 更新失败的情况下，只会更新lastRefreshMs字段
         this.lastRefreshMs = now;
     }
 
@@ -310,7 +350,7 @@ public final class Metadata {
         this.lastRefreshMs = 0;
         requestUpdate();
     }
-
+    // 根据传入的Cluster对象更新数据
     private Cluster getClusterForCurrentTopics(Cluster cluster) {
         Set<String> unauthorizedTopics = new HashSet<>();
         Collection<PartitionInfo> partitionInfos = new ArrayList<>();
@@ -318,11 +358,14 @@ public final class Metadata {
         Set<String> internalTopics = Collections.emptySet();
         String clusterId = null;
         if (cluster != null) {
+
             clusterId = cluster.clusterResource().clusterId();
             internalTopics = cluster.internalTopics();
+            // 记录未授权的主题
             unauthorizedTopics.addAll(cluster.unauthorizedTopics());
+            // 从未授权的主题中移除当前已知可用的主题
             unauthorizedTopics.retainAll(this.topics.keySet());
-
+            // 更新partition信息
             for (String topic : this.topics.keySet()) {
                 List<PartitionInfo> partitionInfoList = cluster.partitionsForTopic(topic);
                 if (partitionInfoList != null) {
@@ -331,6 +374,7 @@ public final class Metadata {
             }
             nodes = cluster.nodes();
         }
+        // 构造新的Cluster
         return new Cluster(clusterId, nodes, partitionInfos, unauthorizedTopics, internalTopics);
     }
 }

@@ -344,6 +344,15 @@ public class NetworkClient implements KafkaClient {
      */
     @Override
     public List<ClientResponse> poll(long timeout, long now) {
+        /**
+         * 在这个方法里面有涉及到kafka的网络的方法，但是
+         * 目前我们还没有给大家讲kafka的网络，所以我们分析的时候
+         * 暂时不用分析得特别的详细，我们大概知道是如何获取到元数据
+         * 即可。等我们分析完了kafka的网络以后，我们在回头看这儿的代码
+         * 的时候，其实代码就比较简单了。
+         */
+
+        //步骤一：封装了一个要拉取元数据请求
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
             this.selector.poll(Utils.min(timeout, metadataTimeout, requestTimeoutMs));
