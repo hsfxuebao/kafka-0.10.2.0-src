@@ -169,47 +169,119 @@ public final class RecordAccumulator {
         appendsInProgress.incrementAndGet();
         try {
             // check if we have an in-progress batch
-            // 步骤1：查找TopicPartition对应的Deque
+
+            /**
+             * 步骤一：先根据分区找到应该插入到哪个队列里面。
+             * 如果有已经存在的队列，那么我们就使用存在队列
+             * 如果队列不存在，那么我们新创建一个队列
+             *
+             * 我们肯定是有了存储批次的队列，但是大家一定要知道一个事
+             * 我们代码第一次执行到这儿，获取其实就是一个空的队列。
+             *
+             * 现在代码第二次执行进来。
+             * 假设 分区还是之前的那个分区。
+             *
+             * 这个方法里面我们之前分析，里面就是针对batchs进行的操作
+             * 里面kafka自己封装了一个数据结构：CopyOnWriteMap (这个数据结构本来就是线程安全的)
+             */
             Deque<RecordBatch> dq = getOrCreateDeque(tp);
             // 同步操作，以Deque为锁
+            /**
+             * 假设我们现在有线程一，线程二，线程三
+             *
+             */
             synchronized (dq) {
                 // 检查生产者是否已经关闭了
+                //首先进来的是第一个线程
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
-                // 使用tryAppend()方法向Deque中最后一个RecordBatch追加Record
+                /**
+                 * 步骤二：
+                 *      尝试往队列里面的批次里添加数据
+                 *
+                 *      一开始添加数据肯定是失败的，我们目前只是以后了队列
+                 *      数据是需要存储在批次对象里面（这个批次对象是需要分配内存的）
+                 *      我们目前还没有分配内存，所以如果按场景驱动的方式，
+                 *      代码第一次运行到这儿其实是不成功的。
+                 */
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
+                //第一次进来的时候appendResult的值就为null
                 if (appendResult != null)
-                    // 返回值不为空说明添加成功，直接将返回值进行return
                     return appendResult;
-            }
+            }//释放锁
 
             // we don't have an in-progress record batch try to allocate a new batch
-            // 走到这里，说明可能没有正在接受Record的RecordBatch，需要分配一个新的RecordBatch
-            // 根据消息大小和batchSize，选择一个大的值作为RecordBatch底层ByteBuffer的大小
+            /**
+             * 步骤三：计算一个批次的大小
+             * 在消息的大小和批次的大小之间取一个最大值，用这个值作为当前这个批次的大小。
+             * 有可能我们的一个消息的大小比一个设定好的批次的大小还要大。
+             * 默认一个批次的大小是16K。
+             * 所以我们看到这段代码以后，应该给我们一个启示。
+             * 如果我们生产者发送数的时候，如果我们的消息的大小都是超过16K，
+             * 说明其实就是一条消息就是一个批次，那也就是说消息是一条一条被发送出去的。
+             * 那如果是这样的话，批次这个概念的设计就没有意义了
+             * 所以大家一定要根据自定公司的数据大小的情况去设置批次的大小。
+             */
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
-            // 使用BufferPool缓存池分配ByteBuffer空间
+            /**
+             * 步骤四：
+             *  根据批次的大小去分配内存
+             *
+             *
+             *  线程一，线程二，线程三，执行到这儿都会申请内存
+             *  假设每个线程 都申请了 16k的内存。
+             */
             ByteBuffer buffer = free.allocate(size, maxTimeToBlock);
             synchronized (dq) {
+                //假设线程一 进来了。
+                //线程二就进来了
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
-                // 再次使用tryAppend()方法向Deque中最后一个RecordBatch追加Record
+                /**
+                 * 步骤五：
+                 *      尝试把数据写入到批次里面。
+                 *      代码第一次执行到这儿的时候 依然还是失败的（appendResult==null）
+                 *      目前虽然已经分配了内存
+                 *      但是还没有创建批次，那我们向往批次里面写数据
+                 *      还是不能写的。
+                 *
+                 *   线程二进来执行这段代码的时候，是成功的。
+                 */
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
+                //失败的意思就是appendResult 还是会等于null
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
-                    // 追加成功，释放buffer给BufferPool
+                    //释放内存
+
+                    //线程二到这儿，其实他自己已经把数据写到批次了。所以
+                    //他的内存就没有什么用了，就把内存个释放了（还给内存池了。
                     free.deallocate(buffer);
                     return appendResult;
                 }
-                // 走到这里说明追加失败
-                // 创建一个MemoryRecords
+
+                /**
+                 * 步骤六：
+                 *  根据内存大小封装批次
+                 *
+                 *
+                 *  线程一到这儿 会根据内存封装出来一个批次。
+                 */
                 MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(buffer, compression, TimestampType.CREATE_TIME, this.batchSize);
                 // 使用传入的TopicPartition参数和records新创建一个RecordBatch
                 RecordBatch batch = new RecordBatch(tp, recordsBuilder, time.milliseconds());
-                // 使用新创建的batch再次尝试
+                //尝试往这个批次里面写数据，到这个时候 我们的代码会执行成功。
+
+                //线程一，就往批次里面写数据，这个时候就写成功了。
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
-                // 将新创建的RecordBatch添加到dp及incomplete中
+                /**
+                 * 步骤七：
+                 *  把这个批次放入到这个队列的队尾
+                 *
+                 *
+                 *  线程一把批次添加到队尾
+                 */
                 dq.addLast(batch);
                 incomplete.add(batch);
                 return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true);
@@ -227,8 +299,11 @@ public final class RecordAccumulator {
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
         // 获取deque中最后一个RecordBatch
         RecordBatch last = deque.peekLast();
+        //第一次进来是没有批次的，所以last肯定为null
+
+        //线程二进来的时候，这个last不为空
         if (last != null) {
-            // 向last中添加消息，获得返回值future
+            //线程二就插入数据就ok了
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
                 // 如果返回的future为空，表示该RecordBatch已经没有足够的空间了，将该RecordBatch的MemoryRecords对象关闭
@@ -249,6 +324,7 @@ public final class RecordAccumulator {
         List<RecordBatch> expiredBatches = new ArrayList<>();
         int count = 0;
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
+            //获取到每个分区的队列 -》 队列里面对应的批次
             Deque<RecordBatch> dq = entry.getValue();
             TopicPartition tp = entry.getKey();
             // We only check if the batch should be expired if the partition does not have a batch in flight.
@@ -260,16 +336,20 @@ public final class RecordAccumulator {
                     // iterate over the batches and expire them if they have been in the accumulator for more than requestTimeOut
                     RecordBatch lastBatch = dq.peekLast();
                     Iterator<RecordBatch> batchIterator = dq.iterator();
+                    //迭代的看每个分区里面的每个批次
                     while (batchIterator.hasNext()) {
                         RecordBatch batch = batchIterator.next();
                         boolean isFull = batch != lastBatch || batch.isFull();
+                        //判断一下是否超时
                         // Check if the batch has expired. Expired batches are closed by maybeExpire, but callbacks
                         // are invoked after completing the iterations, since sends invoked from callbacks
                         // may append more batches to the deque being iterated. The batch is deallocated after
                         // callbacks are invoked.
                         if (batch.maybeExpire(requestTimeout, retryBackoffMs, now, this.lingerMs, isFull)) {
+                            //增加到超时的数据结构里面
                             expiredBatches.add(batch);
                             count++;
+                            //从数据结构里面移除
                             batchIterator.remove();
                         } else {
                             // Stop at the first batch that has not expired.
@@ -282,7 +362,10 @@ public final class RecordAccumulator {
         if (!expiredBatches.isEmpty()) {
             log.trace("Expired {} batches in accumulator", count);
             for (RecordBatch batch : expiredBatches) {
+                //调用done方法
+                //方法里面传过去了一个TimeoutException的异常。（超时了）
                 batch.expirationDone();
+                // 释放资源
                 deallocate(batch);
             }
         }
@@ -330,28 +413,84 @@ public final class RecordAccumulator {
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
 
+        //waiters里面有数据,说明我们的这个内存池里面内存不够了。
+        //如果exhausted的值等于true，说明内存池里面的内存不够用了。
         boolean exhausted = this.free.queued() > 0;
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
             TopicPartition part = entry.getKey();
             Deque<RecordBatch> deque = entry.getValue();
-
+            //根据分区 可以获取到这个分区的leader partition在哪一台kafka的主机上面。
             Node leader = cluster.leaderFor(part);
             synchronized (deque) {
+                //如果没有找到对应主机。 unknownLeaderTopics
                 if (leader == null && !deque.isEmpty()) {
                     // This is a partition for which leader is not known, but messages are available to send.
                     // Note that entries are currently not removed from batches when deque is empty.
                     unknownLeaderTopics.add(part.topic());
                 } else if (!readyNodes.contains(leader) && !muted.contains(part)) {
+                    //首先从队列的队头获取到批次
                     RecordBatch batch = deque.peekFirst();
+                    //如果这个catch不null，我们判断一下是否可以发送这个批次。
                     if (batch != null) {
+                        /**
+                         * batch.attempts:重试的次数
+                         * batch.lastAttemptMs：上一次重试的时间
+                         * retryBackoffMs：重试的时间间隔
+                         *
+                         * backingOff：重新发送数据的时间到了
+                         */
                         boolean backingOff = batch.attempts > 0 && batch.lastAttemptMs + retryBackoffMs > nowMs;
+                        /**
+                         * nowMs: 当前时间
+                         * batch.lastAttemptMs： 上一次重试的时间。
+                         * waitedTimeMs=这个批次已经等了多久了。
+                         */
                         long waitedTimeMs = nowMs - batch.lastAttemptMs;
+                        /**
+                         * 但是我们用场景驱动的方式去分析，因为我们第一次发送数据。
+                         * 所以之前也没有消息发送出去过，也就没有重试这一说。
+                         *
+                         * timeToWaitMs =lingerMs
+                         * lingerMs
+                         * 这个值默认是0，如果这个值默认是0 的话，那代表着来一条消息
+                         * 就发送一条消息，那很明显是不合适的。
+                         * 所以我们发送数据的时候，大家一定要记得去配置这个参数。
+                         * 假设我们配置的是100ms
+                         * timeToWaitMs = linerMs = 100ms
+                         * 消息最多存多久就必须要发送出去了。
+                         */
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
+                        /**
+                         * timeToWaitMs: 最多能等待多久
+                         * waitedTimeMs： 已经等待了多久
+                         * timeLeftMs： 还要在等待多久
+                         */
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
+                        /**
+                         *如果队列大于一，说明这个队列里面至少有一个批次肯定是写满了
+                         * 如果批次写满了肯定是可以发送数据了。
+                         *当然也有可能就是这个队列里面只有一个批次，然后刚好这个批次
+                         * 写满了，也可以发送数据。
+                         *
+                         * full：是否有写满的批次
+                         */
                         boolean full = deque.size() > 1 || batch.isFull();
+                        /**
+                         * waitedTimeMs:已经等待了多久
+                         * timeToWaitMs：最多需要等待多久
+                         * expired： 时间到了，到了发送消息的时候了
+                         * 如果expired=true 代表就是时间到了，到了发送消息的时候了
+                         */
                         boolean expired = waitedTimeMs >= timeToWaitMs;
+                        /**
+                         * 1）full: 如果一个批次写满了（无论时间有没有到）
+                         * 2）expired：时间到了（批次没写满也得发送）
+                         * 3）exhausted：内存不够（消息发送出去以后，就会释放内存）
+                         */
                         boolean sendable = full || expired || exhausted || closed || flushInProgress();
                         if (sendable && !backingOff) {
+                            //把可以发送批次的partition的leader partition所在的主机加入到
+                            //readyNodes
                             readyNodes.add(leader);
                         } else {
                             // Note that this results in a conservative estimate since an un-sendable partition may have
@@ -450,6 +589,7 @@ public final class RecordAccumulator {
      * Get the deque for the given topic-partition, creating it if necessary.
      */
     private Deque<RecordBatch> getOrCreateDeque(TopicPartition tp) {
+        //直接从batches里面获取当前分区对应的存储队列
         Deque<RecordBatch> d = this.batches.get(tp);
         if (d != null)
             return d;

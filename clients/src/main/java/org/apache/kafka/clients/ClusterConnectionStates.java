@@ -36,10 +36,14 @@ final class ClusterConnectionStates {
      * @return true if we can initiate a new connection
      */
     public boolean canConnect(String id, long now) {
+        //首先从缓存里面获取当前主机的连接。
         NodeConnectionState state = nodeState.get(id);
         if (state == null)
             return true;
         else
+            //可以从缓存里面获取到连接。
+            //但是连接的状态是DISCONNECTED 并且
+            // now - state.lastConnectAttemptMs >= this.reconnectBackoffMs 说明可以进行重试，重试连接。
             return state.state == ConnectionState.DISCONNECTED && now - state.lastConnectAttemptMs >= this.reconnectBackoffMs;
     }
 

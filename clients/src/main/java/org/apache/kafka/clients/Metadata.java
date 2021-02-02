@@ -54,9 +54,10 @@ public final class Metadata {
 
     public static final long TOPIC_EXPIRY_MS = 5 * 60 * 1000;
     private static final long TOPIC_EXPIRY_NEEDS_UPDATE = -1L;
-    // 两次刷新元数据退避时间，避免频繁刷新导致性能消耗
+    //两个更新元数据的请求的最小的时间间隔，默认值是100ms
+    //目的就是减少网络的压力
     private final long refreshBackoffMs;
-    // 每隔多久更新一次，默认是300秒（metadata.max.age.ms）
+    // //多久自动更新一次元数据，默认值是5分钟更新一次。
     private final long metadataExpireMs;
     // 集群元数据版本号，元数据更新成功一次，版本号就自增1
     private int version;
@@ -179,16 +180,27 @@ public final class Metadata {
             throw new IllegalArgumentException("Max time to wait for metadata updates should not be < 0 milli seconds");
         }
         long begin = System.currentTimeMillis();
+        //看剩余可以使用的时间，一开始是最大等待的时间。
         long remainingWaitMs = maxWaitMs;
-        // 比较版本号。当Sender成功更新Metadata之后，version值会加1，否则会一直循环，直到超时
+        //version是元数据的版本号。
+        //如果当前的这个version小于等于上一次的version。
+        //说明元数据还没更新。
+        //因为如果sender线程那儿 更新元数据，如果更新成功了，sender线程肯定回去累加这个version。
         while (this.version <= lastVersion) {
+            //如果还有剩余的时间。
             if (remainingWaitMs != 0)
-                // 带有超时机制的线程wait
+                //让当前线程阻塞等待。
+                //我们这儿虽然没有去看 sender线程的源码
+                //但是我们知道，他那儿肯定会做这样的一个操作
+                //如果更新元数据成功了，会唤醒这个线程。
                 wait(remainingWaitMs);
+            //如果代码执行到这儿 说明就要么就被唤醒了，要么就到点了。
+            //计算一下花了多少时间。
             long elapsed = System.currentTimeMillis() - begin;
             // 超时，抛出超时异常
             if (elapsed >= maxWaitMs)
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
+            //再次计算 可以使用的时间。
             remainingWaitMs = maxWaitMs - elapsed;
         }
     }
@@ -245,6 +257,12 @@ public final class Metadata {
             // 场景驱动方式研究代码，第一次进来是在product初始化的时候
             // 但是我们目前topics是空的
             // 所以下面的代码是不会被运行的。
+
+            //到现在我们的代码是不是第二次进来了呀？
+            //如果第二次进来，此时此刻进来，我们 producer.send(topics,)方法
+            //要去拉取元数据  -》 sender -》 代码走到的这儿。
+            //第二次进来的时候，topics其实不为空了，因为我们已经给它赋值了
+            //所以这儿的代码是会继续运行的。
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, Long> entry = it.next();
                 long expireMs = entry.getValue();
@@ -261,13 +279,17 @@ public final class Metadata {
             listener.onMetadataUpdate(cluster);
 
         String previousClusterId = cluster.clusterResource().clusterId();
-
+        //这个的默认值是false，所以这个分支的代码不会被运行。
         if (this.needMetadataForAllTopics) {
             // the listener may change the interested topics, which could cause another metadata refresh.
             // If we have already fetched all topics, however, another fetch should be unnecessary.
             this.needUpdate = false;
             this.cluster = getClusterForCurrentTopics(cluster);
         } else {
+            //所以代码执行的是这儿。
+            //直接把刚刚传进来的对象赋值给了这个cluster。
+            //cluster代表的是kafka集群的元数据。
+            //初始化的时候，update这个方法没有去服务端拉取数据。
             this.cluster = cluster;
         }
 
@@ -278,7 +300,8 @@ public final class Metadata {
                 log.info("Cluster ID: {}", cluster.clusterResource().clusterId());
             clusterResourceListeners.onUpdate(cluster.clusterResource());
         }
-        // 唤醒等待Metadata更新完成的线程
+        //大家发现这儿会有一个notifyAll，这个最重要的一个作用是不是就是唤醒，我们上一讲
+        //看到那个wait的线程。
         notifyAll();
         log.debug("Updated cluster metadata version {} to {}", this.version, this.cluster);
     }

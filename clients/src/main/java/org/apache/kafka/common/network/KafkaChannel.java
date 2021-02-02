@@ -136,7 +136,11 @@ public class KafkaChannel {
     public void setSend(Send send) {
         if (this.send != null)
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress.");
+        //往KafkaChannel里面绑定一个发送出去的请求。
         this.send = send;
+        //关键的代码来了
+        //这儿绑定了一个OP_WRITE事件。
+        //一旦绑定了这个事件以后，我们就可以往服务端发送请求了。
         this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
     }
 
@@ -146,8 +150,9 @@ public class KafkaChannel {
         if (receive == null) {
             receive = new NetworkReceive(maxReceiveSize, id);
         }
-
+        //一直在读取数据。
         receive(receive);
+        //是否读完一个完整的响应消息
         if (receive.complete()) {
             receive.payload().rewind();
             result = receive;
@@ -158,6 +163,7 @@ public class KafkaChannel {
 
     public Send write() throws IOException {
         Send result = null;
+        //send方法就是发送网络请求的方法
         if (send != null && send(send)) {
             result = send;
             send = null;
@@ -170,8 +176,11 @@ public class KafkaChannel {
     }
 
     private boolean send(Send send) throws IOException {
+        //最终执行发送请求的代码是在这儿
         send.writeTo(transportLayer);
+        //如果已经完成网络请求的发送。
         if (send.completed())
+            //然后就移除OP_WRITE
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
 
         return send.completed();

@@ -33,6 +33,8 @@ public abstract class AbstractResponse extends AbstractRequestResponse {
     }
 
     public static AbstractResponse getResponse(int requestId, Struct struct) {
+        //因为服务端发送回来的是一个二进制的一个数据结构
+        //所以生产者这儿要对这个数据结构要进行解析
         ApiKeys apiKey = ApiKeys.forId(requestId);
         switch (apiKey) {
             case PRODUCE:
@@ -42,6 +44,8 @@ public abstract class AbstractResponse extends AbstractRequestResponse {
             case LIST_OFFSETS:
                 return new ListOffsetResponse(struct);
             case METADATA:
+
+                //解析完了以后就封装成一个MetadataResponse对象。
                 return new MetadataResponse(struct);
             case OFFSET_COMMIT:
                 return new OffsetCommitResponse(struct);

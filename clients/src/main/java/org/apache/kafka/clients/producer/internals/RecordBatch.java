@@ -74,6 +74,7 @@ public final class RecordBatch {
             return null;
         } else {
             // 向MemoryRecords中添加数据，offsetCounter是在RecordBatch中的偏移量
+            //TODO 往批次里面去写数据
             long checksum = this.recordsBuilder.append(timestamp, key, value);
             // 记录最大消息大小的字节数，这个值会不断更新，始终记录已添加的消息记录中最大的那条的大小
             this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
@@ -112,12 +113,32 @@ public final class RecordBatch {
         produceFuture.set(baseOffset, logAppendTime, exception);
 
         // execute callbacks
+        /**
+         *
+         * 我们发送数据的时候，一条消息就代表一个thunk
+         * 遍历所以我们当时发送出去消息。
+         */
         for (Thunk thunk : thunks) {
             try {
                 if (exception == null) {
                     RecordMetadata metadata = thunk.future.value();
+                    //调用我们发送的消息的回调函数
+                    //大家还记不记得我们在发送数据的时候
+                    //还不是绑定了一个回调函数。
+                    //这儿说的调用的回调函数
+                    //就是我们开发，生产者代码的时候，我们用户传进去的那个
+                    //回调函数。
                     thunk.callback.onCompletion(metadata, null);
+                    //带过去的就是没有异常
+                    //也就是说我们生产者那儿的代码，捕获异常的时候就是发现没有异常。
                 } else {
+                    //如果有异常就会把异常传给回调函数。
+                    //由我们用户自己去捕获这个异常。
+                    //然后对这个异常进行处理
+                    //大家根据自己公司的业务规则进行处理就可以了。
+
+                    //如果走这个分支的话，我们的用户的代码是可以捕获到timeoutexception
+                    //这个异常，如果用户捕获到了，做对应的处理就可以了。
                     thunk.callback.onCompletion(null, exception);
                 }
             } catch (Exception e) {
@@ -157,10 +178,31 @@ public final class RecordBatch {
      */
     public boolean maybeExpire(int requestTimeoutMs, long retryBackoffMs, long now, long lingerMs, boolean isFull) {
 
+        /**
+         * requestTimeoutMs：代表的是请求发送的超时的时间。默认值是30.
+         * now：当前时间
+         * lastAppendTime：批次的创建的时间（上一次重试的时间）
+         * now - this.lastAppendTime 大于30秒，说明批次超时了 还没发送出去。
+         */
         if (!this.inRetry() && isFull && requestTimeoutMs < (now - this.lastAppendTime))
+            // 记录异常信息
             expiryErrorMessage = (now - this.lastAppendTime) + " ms has passed since last append";
+        /**
+         * lingerMs: 100ms，无论如何都要把消息发送出去的时间
+         *
+         * createdMs:批次创建的时间
+         *
+         * 已经大于30秒了。 说明也是超时了。
+         *
+         */
         else if (!this.inRetry() && requestTimeoutMs < (now - (this.createdMs + lingerMs)))
             expiryErrorMessage = (now - (this.createdMs + lingerMs)) + " ms has passed since batch creation plus linger time";
+        /**
+         * 针对重试
+         * lastAttemptMs： 上一次重试的时间（批次创建的时间）
+         * retryBackoffMs： 重试的时间间隔
+         * 说明也是超时了。
+         */
         else if (this.inRetry() && requestTimeoutMs < (now - (this.lastAttemptMs + retryBackoffMs)))
             expiryErrorMessage = (now - (this.lastAttemptMs + retryBackoffMs)) + " ms has passed since last attempt plus backoff time";
 
@@ -178,6 +220,8 @@ public final class RecordBatch {
     void expirationDone() {
         if (expiryErrorMessage == null)
             throw new IllegalStateException("Batch has not expired");
+        //调用done方法
+        //方法里面传过去了一个TimeoutException的异常。（超时了
         this.done(-1L, Record.NO_TIMESTAMP,
                   new TimeoutException("Expiring " + recordCount + " record(s) for " + topicPartition + ": " + expiryErrorMessage));
     }

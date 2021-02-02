@@ -522,6 +522,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // intercept the record, which can be potentially modified; this method does not throw exceptions
         // 使用ProducerInterceptor对消息进行拦截或修改
         ProducerRecord<K, V> interceptedRecord = this.interceptors == null ? record : this.interceptors.onSend(record);
+        // TODO 核心代码
         return doSend(interceptedRecord, callback);
     }
 
@@ -532,10 +533,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         TopicPartition tp = null;
         try {
             // first make sure the metadata for the topic is available
-            // 获取Kafka集群信息，会唤醒Sender线程更新Kafka集群的元数据
+            /**
+             * 步骤一：
+             *      同步等待拉取元数据。
+             *  maxBlockTimeMs 最多能等待多久。
+             */
             ClusterAndWaitTime clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
             Cluster cluster = clusterAndWaitTime.cluster;
+            /**
+             * 步骤二：
+             *  对消息的key和value进行序列化。
+             */
             byte[] serializedKey;
             try {
                 serializedKey = keySerializer.serialize(record.topic(), record.key());
@@ -552,27 +561,56 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() +
                         " specified in value.serializer");
             }
-            // 选择分区
+            /**
+             * 步骤三：
+             *  根据分区器选择消息应该发送的分区。
+             *
+             *  因为前面我们已经获取到了元数据
+             *  这儿我们就可以根据元数据的信息
+             *  计算一下，我们应该要把这个数据发送到哪个分区上面。
+             */
             int partition = partition(record, serializedKey, serializedValue, cluster);
             /**
+             *
 			 * 计算消息记录的总大小
 			 * Records.LOG_OVERHEAD = SIZE_LENGTH（值为4） + OFFSET_LENGTH（值为8）
 			 * Records.LOG_OVERHEAD有SIZE_LENGTH和OFFSET_LENGTH两个字段，分别表示存放消息长度和消息偏移量所需要的字节数
 			 */
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
-            // 检查消息长度是否合法，不大于maxRequestSize，不大于totalMemorySize，否则会抛出RecordTooLargeException异常
+
+            /**
+             * 步骤四：
+             *  确认一下消息的大小是否超过了最大值。
+             *  KafkaProdcuer初始化的时候，指定了一个参数，代表的是Producer这儿最大能发送的是一条消息能有多大
+             *  默认最大是1M，我们一般都回去修改它。
+             */
             ensureValidRecordSize(serializedSize);
+            /**
+             * 步骤五：
+             *  根据元数据信息，封装分区对象
+             */
             tp = new TopicPartition(record.topic(), partition);
             long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
+            /**
+             * 步骤六：
+             *  给每一条消息都绑定他的回调函数。因为我们使用的是异步的方式发送的消息。
+             */
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
-            // 将消息追加到RecordAccumulator中，调用其append()方法
+            /**
+             * 步骤七：
+             *  把消息放入accumulator（32M的一个内存）
+             *  然后有accumulator把消息封装成为一个批次一个批次的去发送。
+             */
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
             // 如果达到批次要求
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
-                // 唤醒Sender进行消息发送
+                /**
+                 * 步骤八:
+                 *  唤醒sender线程。他才是真正发送数据的线程。
+                 */
                 this.sender.wakeup();
             }
             return result.future;
@@ -620,18 +658,30 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      */
     private ClusterAndWaitTime waitOnMetadata(String topic, Integer partition, long maxWaitMs) throws InterruptedException {
         // add topic to metadata topic list if it is not there already and reset expiry
-        // 如果Metadata对象的topics集合中没有该topic，就将其加入
+        // 把当前的topic存入到元数据里面
         metadata.add(topic);
+
+        //我们使用的是场景驱动的方式，然后我们目前代码执行到的producer端初始化完成。
+        //我们知道这个cluster里面其实没有元数据，只是有我们写代码的时候设置address
         Cluster cluster = metadata.fetch();
+
+        //根据当前的topic从这个集群的cluster元数据信息里面查看分区的信息。
+        //因为我们目前是第一次执行这段代码，所以这儿肯定是没有对应的分区的信息的。
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
         // Return cached metadata if we have it, and if the record's partition is either undefined
         // or within the known partition range
-        // fetch()返回的是Cluster对象，判断Cluster对象中是否有该topic的分区信息，如果有就可以直接返回
+        //如果在元数据里面获取到了 分区的信息
+        //我们用场景驱动的方式，我们知道如果是第一次代码进来这儿，代码是不会运行这儿。
         if (partitionsCount != null && (partition == null || partition < partitionsCount))
+            //直接返回cluster元数据信息，拉取元数据花的时间。
             return new ClusterAndWaitTime(cluster, 0);
 
+        //如果代码执行到这儿，说明，真的需要去服务端拉取元数据。
+        //记录当前时间
         long begin = time.milliseconds();
+        //剩余多少时间，默认值给的是 最多可以等待的时间。
         long remainingWaitMs = maxWaitMs;
+        //已经花了多少时间。
         long elapsed;
         // Issue metadata requests until we have metadata for the topic or maxWaitTimeMs is exceeded.
         // In case we already have cached metadata for the topic, but the requested partition is greater
@@ -640,27 +690,45 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // 如果没有拉取到相应主题的元数据，将会重复拉取
         do {
             log.trace("Requesting metadata update for topic {}.", topic);
-            // 设置Metadata的needUpdate字段，并得到当前的元数据版本号
+            //1)获取当前元数据的版本
+            //在Producer管理元数据时候，对于他来说元数据是有版本号的。
+            //每次成功更新元数据，都会递增这个版本号。
+            //把needUpdate 标识赋值为true
             int version = metadata.requestUpdate();
-            // 唤醒Sender线程
+            /**
+             * TODO 这个步骤重要
+             * 我们发现这儿去唤醒sender线程。
+             * 其实是因为，拉取元数据这个操作是有sender线程去完成的。
+             * 这个地方把线程给唤醒了以后
+             * 我们知道sender线程肯定就开始进行干活了！！ 至于怎么我们后面在继续分析。
+             *
+             * 这儿我告诉大家，java的线程的知识，并发的知识，大家一定要掌握。
+             * 没有掌握好的同学，下去补一补这方面的知识。
+             */
             sender.wakeup();
             try {
-                // 等待更新，会阻塞
+                //TODO 等待元数据
+                //同步的等待
+                //等待这sender线程获取到元数据。
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
+            //尝试获取一下集群的元数据信息。
             cluster = metadata.fetch();
+            //计算一下 拉取元数据已经花了多少时间
             elapsed = time.milliseconds() - begin;
             // 等待超过最大超时时间，直接抛出异常
             if (elapsed >= maxWaitMs)
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
-            // 检查主题的授权信息，如果未授权，直接抛出异常
+            //如果已经获取到了元数据，但是发现topic没有授权
             if (cluster.unauthorizedTopics().contains(topic))
                 throw new TopicAuthorizationException(topic);
-            // 更新超时时间
+            //计算出来 还可以用的时间。
             remainingWaitMs = maxWaitMs - elapsed;
+            //尝试获取一下，我们要发送消息的这个topic对应分区的信息。
+            //如果这个值不为null，说明前面sender线程已经获取到了元数据了。
             partitionsCount = cluster.partitionCountForTopic(topic);
         } while (partitionsCount == null);
 
@@ -676,11 +744,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * Validate that the record size isn't too large
      */
     private void ensureValidRecordSize(int size) {
+        //如果一条消息的大小超过了 1M，那么就会报错
         if (size > this.maxRequestSize)
             throw new RecordTooLargeException("The message is " + size +
                                               " bytes when serialized which is larger than the maximum request size you have configured with the " +
                                               ProducerConfig.MAX_REQUEST_SIZE_CONFIG +
                                               " configuration.");
+        //如果你的一条消息的大小超过32M也会报错。
         if (size > this.totalMemorySize)
             throw new RecordTooLargeException("The message is " + size +
                                               " bytes when serialized which is larger than the total memory buffer you have configured with the " +
@@ -854,10 +924,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * calls configured partitioner class to compute the partition.
      */
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
-        // 获取记录中指定的分区
+        //如果你的这个消息已经分配了分区号，那直接就用这个分区号就可以了
+        //但是正常情况下，消息是没有分区号的。
         Integer partition = record.partition();
         return partition != null ?
                 partition :
+               //使用分区器进行选择合适的分区
                 partitioner.partition(
                         record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
     }

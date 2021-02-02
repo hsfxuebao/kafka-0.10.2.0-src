@@ -41,6 +41,7 @@ public class NetworkReceive implements Receive {
 
     public NetworkReceive(String source) {
         this.source = source;
+        //其实就是一个int类型的大小
         this.size = ByteBuffer.allocate(4);
         this.buffer = null;
         this.maxSize = UNLIMITED;
@@ -64,6 +65,7 @@ public class NetworkReceive implements Receive {
 
     @Override
     public boolean complete() {
+        //size 没有剩余空间（50） &&
         return !size.hasRemaining() && !buffer.hasRemaining();
     }
 
@@ -77,11 +79,16 @@ public class NetworkReceive implements Receive {
     @Deprecated
     public long readFromReadableChannel(ReadableByteChannel channel) throws IOException {
         int read = 0;
+        //size是一个4字节大小的内存空间
+        //如果size还有剩余的内存空间。
         if (size.hasRemaining()) {
+            //先读取4字节的数据，（代表的意思就是后面跟着的消息体的大小）
             int bytesRead = channel.read(size);
             if (bytesRead < 0)
                 throw new EOFException();
             read += bytesRead;
+            //一直要读取到当这个size没有剩余空间
+            //说明已经读取到了一个4字节的int类型的数了。
             if (!size.hasRemaining()) {
                 size.rewind();
                 int receiveSize = size.getInt();
@@ -89,11 +96,13 @@ public class NetworkReceive implements Receive {
                     throw new InvalidReceiveException("Invalid receive (size = " + receiveSize + ")");
                 if (maxSize != UNLIMITED && receiveSize > maxSize)
                     throw new InvalidReceiveException("Invalid receive (size = " + receiveSize + " larger than " + maxSize + ")");
-
+                //分配一个内存空间，这个内存空间的大小
+                //就是刚刚读出来的那个4字节的int的大小。
                 this.buffer = ByteBuffer.allocate(receiveSize);
             }
         }
         if (buffer != null) {
+            //去读取数据
             int bytesRead = channel.read(buffer);
             if (bytesRead < 0)
                 throw new EOFException();

@@ -175,10 +175,30 @@ public class Sender implements Runnable {
         //就是这行代码去拉取的元数据。
 
 
+        /**
+         * 我们用场景驱动的方式，现在我们的代码是第二次进来
+         * 第二次进来的时候，已经有元数据了，所以cluster这儿是有元数据。
+         *
+         * 步骤一：
+         *      获取元数据
+         *
+         *
+         */
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        /**
+         * 步骤二：
+         *      首先是判断哪些partition有消息可以发送，获取到这个partition的leader partition
+         *      对应的broker主机。
+         *
+         *      哪些broker上面需要我们去发送消息？
+         */
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
+        /**
+         * 步骤三：
+         *      标识还没有拉取到元数据的topic
+         */
         // if there are any partitions whose leaders are not known yet, force metadata update
         if (!result.unknownLeaderTopics.isEmpty()) {
             // The set of topics with unknown leader contains topics with leader election pending as well as
@@ -194,13 +214,37 @@ public class Sender implements Runnable {
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            /**
+             * 步骤四：检查与要发送数据的主机的网络是否已经建立好。
+             */
             if (!this.client.ready(node, now)) {
+                //如果返回的是false  !false 代码就进来
+                //移除result 里面要发送消息的主机。
+                //所以我们会看到这儿所有的主机都会被移除
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.connectionDelay(node, now));
             }
         }
 
         // create produce requests
+        /**
+         * 步骤五：
+         *
+         * 我们有可能要发送的partition有很多个，
+         * 很有可能有一些partition的leader partition是在同一台服务器上面。
+         * p0:leader：0
+         * p1:leader: 0
+         * p2:leader: 1
+         * p3:leader: 2
+         *      假设我们集群只有3台服务器
+         * 当我们的分区的个数大于集群的节点的个数的时候，一定会有多个leader partition在同一台服务器上面。
+         *
+         * 按照broker进行分组，同一个broker的partition为同一组
+         * 0:{p0,p1}
+         * 1:{p2}
+         * 2:{p3}
+         *
+         */
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
@@ -208,11 +252,17 @@ public class Sender implements Runnable {
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
             for (List<RecordBatch> batchList : batches.values()) {
+                //如果batches 空的话，这而的代码也就不执行了。
                 for (RecordBatch batch : batchList)
                     this.accumulator.mutePartition(batch.topicPartition);
             }
         }
 
+        /**
+         * 步骤六：
+         *  对超时的批次是如何处理的？
+         *
+         */
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
         // update sensors
         for (RecordBatch expiredBatch : expiredBatches)
@@ -229,12 +279,34 @@ public class Sender implements Runnable {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
             pollTimeout = 0;
         }
+
+        /**
+         * 步骤七：
+         *      创建发送消息的请求
+         *
+         *
+         * 创建请求
+         * 我们往partition上面去发送消息的时候，有一些partition他们在同一台服务器上面
+         * ，如果我们一分区一个分区的发送我们网络请求，那网络请求就会有一些频繁
+         * 我们要知道，我们集群里面网络资源是非常珍贵的。
+         * 会把发往同个broker上面partition的数据 组合成为一个请求。
+         * 然后统一一次发送过去，这样子就减少了网络请求。
+         */
+
+        //如果网络连接没有建立好 batches其实是为空。
+        //也就说其实这段代码也是不会执行。
         sendProduceRequests(batches, now);
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
         // the select time will be the time difference between now and its linger expiry time;
         // otherwise the select time will be the time difference between now and the metadata expiry time;
+        /**
+         * 步骤八：
+         * 真正执行网络操作的都是这个NetWordClient这个组件
+         * 包括：发送请求，接受响应（处理响应）
+         */
+        //我们猜这儿可能就是去建立连接。
         this.client.poll(pollTimeout, now);
     }
 
@@ -262,6 +334,9 @@ public class Sender implements Runnable {
      */
     private void handleProduceResponse(ClientResponse response, Map<TopicPartition, RecordBatch> batches, long now) {
         int correlationId = response.requestHeader().correlationId();
+        //这个地方就是就是一个特殊情况
+        //我们要发送请求了，但是发现 broker失去连接。
+        //不过这个是一个小概率事件。
         if (response.wasDisconnected()) {
             log.trace("Cancelled request {} due to node {} being disconnected", response, response.destination());
             for (RecordBatch batch : batches.values())
@@ -274,18 +349,29 @@ public class Sender implements Runnable {
         } else {
             log.trace("Received produce response from node {} with correlation id {}", response.destination(), correlationId);
             // if we have a response, parse it
+            //所以我们正常情况下，走的都是这个分支
             if (response.hasResponse()) {
                 ProduceResponse produceResponse = (ProduceResponse) response.responseBody();
+                /**
+                 * 遍历每个分区的响应
+                 */
                 for (Map.Entry<TopicPartition, ProduceResponse.PartitionResponse> entry : produceResponse.responses().entrySet()) {
                     TopicPartition tp = entry.getKey();
                     ProduceResponse.PartitionResponse partResp = entry.getValue();
+
+                    //获取到当前分区的响应。
                     RecordBatch batch = batches.get(tp);
+                    //对响应进行处理
                     completeBatch(batch, partResp, correlationId, now);
                 }
                 this.sensors.recordLatency(response.destination(), response.requestLatencyMs());
                 this.sensors.recordThrottleTime(produceResponse.getThrottleTime());
             } else {
                 // this is the acks = 0 case, just complete all requests
+                //acks=0意思就是不需要返回响应。
+                //1 p -> b  leader partion
+                //-1  p -> broker leader partition -> follower partition
+                //在生产环境里面，我们一般是不会把acks 参数设置为0
                 for (RecordBatch batch : batches.values()) {
                     completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NONE), correlationId, now);
                 }
@@ -303,7 +389,11 @@ public class Sender implements Runnable {
      */
     private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId,
                                long now) {
+        //如果处理成功那就是成功了，但是如果服务端那儿处理失败了
+        //是不是也要给我们发送回来异常的信息。
+        //error 这个里面存储的就是服务端发送回来的异常码
         Errors error = response.error;
+        //如果响应里面带有异常 并且 这个请求是可以重试的
         if (error != Errors.NONE && canRetry(batch, error)) {
             // retry
             log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
@@ -311,16 +401,28 @@ public class Sender implements Runnable {
                      batch.topicPartition,
                      this.retries - batch.attempts - 1,
                      error);
+            //重新把发送失败等着批次 加入到队列里面。
             this.accumulator.reenqueue(batch, now);
             this.sensors.recordRetries(batch.topicPartition.topic(), batch.recordCount);
         } else {
+            //这儿过来的数据：带有异常，但是不可以重试（1：压根就不让重试2：重试次数超了）
+
+            //其余的都走这个分支。
             RuntimeException exception;
+            //如果响应里面带有 没有权限的异常
             if (error == Errors.TOPIC_AUTHORIZATION_FAILED)
+                //自己封装一个异常信息（自定义了异常）
                 exception = new TopicAuthorizationException(batch.topicPartition.topic());
             else
                 exception = error.exception();
             // tell the user the result of their request
+            //TODO 核心代码 把异常的信息也给带过去了
+            //我们刚刚看的就是这儿的代码
+            //里面调用了用户传进来的回调函数
+            //回调函数调用了以后
+            //说明我们的一个完整的消息的发送流程就结束了。
             batch.done(response.baseOffset, response.logAppendTime, exception);
+            //看起来这个代码就是要回收资源的。
             this.accumulator.deallocate(batch);
             if (error != Errors.NONE)
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
@@ -374,6 +476,7 @@ public class Sender implements Runnable {
 
         String nodeId = Integer.toString(destination);
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
+
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
