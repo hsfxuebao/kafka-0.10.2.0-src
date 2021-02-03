@@ -43,11 +43,16 @@ import org.apache.kafka.common.utils.Time;
  */
 public final class BufferPool {
 
+    // 整个Pool的大小
     private final long totalMemory;
     private final int poolableSize;
+    // 控制并发访问
     private final ReentrantLock lock;
+    // 队列，缓存了指定大小的ByteBuffer
     private final Deque<ByteBuffer> free;
+    // 记录因申请不到足够空间而阻塞的线程所在的Condition条件队列
     private final Deque<Condition> waiters;
+    // 可用空间大小，totalMemory - free.size() * ByteBuffer大小
     private long availableMemory;
     private final Metrics metrics;
     private final Time time;

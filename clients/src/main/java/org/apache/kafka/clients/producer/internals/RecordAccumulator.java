@@ -63,17 +63,24 @@ public final class RecordAccumulator {
 
     private volatile boolean closed;
     private final AtomicInteger flushesInProgress;
+    // 记录正在向RecordAccumulator追加消息的线程数
     private final AtomicInteger appendsInProgress;
+    // 指定每个RecordBatch底层ByteBuffer的大小
     private final int batchSize;
+    // 压缩类型
     private final CompressionType compression;
     private final long lingerMs;
     private final long retryBackoffMs;
+    // 使用BufferPool缓冲池
     private final BufferPool free;
     private final Time time;
+    // 字典的值缓存的是发往对应的TopicPartition中的消息
     private final ConcurrentMap<TopicPartition, Deque<RecordBatch>> batches;
+    // 未发送完成的RecordBatch集合，底层是一个Set集合
     private final IncompleteRecordBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
     private final Set<TopicPartition> muted;
+    // 使用drain方法批量导出RecordBatch时，为防止饥饿，使用该字段记录上次发送停止时的位置，下次继续从此位置开始发送
     private int drainIndex;
 
     /**
@@ -529,6 +536,8 @@ public final class RecordAccumulator {
      * @param maxSize The maximum number of bytes to drain
      * @param now The current unix time in milliseconds
      * @return A list of {@link RecordBatch} for each node specified with total size less than the requested maxSize.
+     *
+     * 进行映射转换，将TopicPartition -> Deque<RecordBatch> 转换为 NodeId -> List<RecordBatch>
      */
     public Map<Integer, List<RecordBatch>> drain(Cluster cluster,
                                                  Set<Node> nodes,
@@ -536,24 +545,32 @@ public final class RecordAccumulator {
                                                  long now) {
         if (nodes.isEmpty())
             return Collections.emptyMap();
-
+        // 转换后的结果
         Map<Integer, List<RecordBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
             int size = 0;
+            // 获取Node上的分区集合
             List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
+            // 记录要发送的RecordBatch的集合
             List<RecordBatch> ready = new ArrayList<>();
             /* to make starvation less likely this loop doesn't start at 0 */
             int start = drainIndex = drainIndex % parts.size();
             do {
+                // 获取分区详细信息
                 PartitionInfo part = parts.get(drainIndex);
+                // 创建TopicPartition
                 TopicPartition tp = new TopicPartition(part.topic(), part.partition());
                 // Only proceed if the partition has no in-flight batches.
+                // 判断需要发送到的分区是否不可用
                 if (!muted.contains(tp)) {
+                    // 获取对应的RecordBatch队列
                     Deque<RecordBatch> deque = getDeque(new TopicPartition(part.topic(), part.partition()));
                     if (deque != null) {
                         synchronized (deque) {
+                            // 查看deque队列的队首RecordBatch
                             RecordBatch first = deque.peekFirst();
                             if (first != null) {
+                                // 检查是否需要退避
                                 boolean backoff = first.attempts > 0 && first.lastAttemptMs + retryBackoffMs > now;
                                 // Only drain the batch if it is not during backoff period.
                                 if (!backoff) {
@@ -561,9 +578,12 @@ public final class RecordAccumulator {
                                         // there is a rare case that a single batch size is larger than the request size due
                                         // to compression; in this case we will still eventually send this batch in a single
                                         // request
+                                        // 数据量已满，结束循环
                                         break;
                                     } else {
+                                        // 从deque中获取第一个RecordBatch
                                         RecordBatch batch = deque.pollFirst();
+                                        // 关闭Compressor及底层输出流，并将MemoryRecords设置为只读
                                         batch.close();
                                         size += batch.sizeInBytes();
                                         ready.add(batch);
@@ -574,8 +594,10 @@ public final class RecordAccumulator {
                         }
                     }
                 }
+                // 更新drainIndex
                 this.drainIndex = (this.drainIndex + 1) % parts.size();
             } while (start != drainIndex);
+            // 记录NodeId与RecordBatch的对应关系
             batches.put(node.id(), ready);
         }
         return batches;

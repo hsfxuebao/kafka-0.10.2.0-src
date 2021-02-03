@@ -31,6 +31,7 @@ import org.apache.kafka.common.record.Record;
  */
 public final class ProduceRequestResult {
 
+    // 计数为1的栅栏
     private final CountDownLatch latch = new CountDownLatch(1);
     private final TopicPartition topicPartition;
 
@@ -66,6 +67,7 @@ public final class ProduceRequestResult {
     public void done() {
         if (baseOffset == null)
             throw new IllegalStateException("The method `set` must be invoked before this method.");
+        // 调用countDown()，唤醒阻塞在latch上的线程
         this.latch.countDown();
     }
 

@@ -50,12 +50,20 @@ public class ConsumerNetworkClient implements Closeable {
 
     // the mutable state of this class is protected by the object's monitor (excluding the wakeup
     // flag and the request completion queue below).
+    // 这里使用的是NetworkClient对象
     private final KafkaClient client;
+    // 缓存队列，key是Node节点，value是发往该Node节点的ClientRequest集合
     private final Map<Node, List<ClientRequest>> unsent = new HashMap<>();
+    // 集群元数据
     private final Metadata metadata;
     private final Time time;
     private final long retryBackoffMs;
+    // ClientRequest在unsent中缓存的超时时长（request.timeout.ms）
     private final long unsentExpiryMs;
+    /**
+     * KafkaConsumer是否正在执行不可中断的方法，该值只会被KafkaConsumer线程修改
+     * 每进入一个不可中断的方法，该值加1，退出不可中断的方法时，该值减1
+     */
     private int wakeupDisabledCount = 0;
 
     // when requests complete, they are transferred to this queue prior to invocation. The purpose
@@ -64,6 +72,7 @@ public class ConsumerNetworkClient implements Closeable {
 
     // this flag allows the client to be safely woken up without waiting on the lock above. It is
     // atomic to avoid the need to acquire the lock above in order to enable it concurrently.
+    // 由调用KafkaConsumer对象的消费者线程之外的其他线程设置，表示要中断KafkaConsumer线程
     private final AtomicBoolean wakeup = new AtomicBoolean(false);
 
     public ConsumerNetworkClient(KafkaClient client,
@@ -95,6 +104,7 @@ public class ConsumerNetworkClient implements Closeable {
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
         ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true,
                 completionHandler);
+        // 添加到unsent中，等待发送
         put(node, clientRequest);
 
         // wakeup the client in case it is blocking in poll so that we can send the queued request
@@ -104,11 +114,14 @@ public class ConsumerNetworkClient implements Closeable {
 
     private void put(Node node, ClientRequest request) {
         synchronized (this) {
+            // 先从unsent中获取有没有对应node的List<ClientRequest>集合
             List<ClientRequest> nodeUnsent = unsent.get(node);
             if (nodeUnsent == null) {
+                // 如果没有则创建
                 nodeUnsent = new ArrayList<>();
                 unsent.put(node, nodeUnsent);
             }
+            // 添加ClientRequest到对应的List<ClientRequest>集合
             nodeUnsent.add(request);
         }
     }
@@ -133,8 +146,10 @@ public class ConsumerNetworkClient implements Closeable {
      */
     public boolean awaitMetadataUpdate(long timeout) {
         long startMs = time.milliseconds();
+        // 获取当前的集群元数据版本暂存
         int version = this.metadata.requestUpdate();
         do {
+            // 循环调用poll操作直到集群元数据版本发生变化
             poll(timeout);
         } while (this.metadata.version() == version && time.milliseconds() - startMs < timeout);
         return this.metadata.version() > version;
@@ -168,6 +183,7 @@ public class ConsumerNetworkClient implements Closeable {
      * @throws InterruptException if the calling thread is interrupted
      */
     public void poll(RequestFuture<?> future) {
+        // 循环检测future是否完成，如果没有完成就执行poll()操作
         while (!future.isDone())
             poll(MAX_POLL_TIMEOUT_MS, time.milliseconds(), future);
     }
@@ -214,6 +230,7 @@ public class ConsumerNetworkClient implements Closeable {
 
         synchronized (this) {
             // send all the requests we can send now
+            // 检测Node节点发送条件，循环处理unsent中缓存的请求，将发送请求绑定到KafkaChannel的send上，等待发送
             trySend(now);
 
             // check whether the poll is still needed by the caller. Note that if the expected completion
@@ -222,7 +239,9 @@ public class ConsumerNetworkClient implements Closeable {
             if (pollCondition == null || pollCondition.shouldBlock()) {
                 // if there are no requests in flight, do not block longer than the retry backoff
                 if (client.inFlightRequestCount() == 0)
+                    // 计算超时时间，取超时时间和delayedTasks队列中最近要执行的定时任务的时间的较小值
                     timeout = Math.min(timeout, retryBackoffMs);
+                // 使用NetworkClient处理消息发送
                 client.poll(Math.min(MAX_POLL_TIMEOUT_MS, timeout), now);
                 now = time.milliseconds();
             } else {
@@ -232,10 +251,12 @@ public class ConsumerNetworkClient implements Closeable {
             // handle any disconnects by failing the active requests. note that disconnects must
             // be checked immediately following poll since any subsequent call to client.ready()
             // will reset the disconnect status
+            // 检测消费者和每个Node之间的连接状态
             checkDisconnects(now);
 
             // trigger wakeups after checking for disconnects so that the callbacks will be ready
             // to be fired on the next call to poll()
+            // 检测wakeup和wakeupDisabledCount，查看是否有其他线程中断
             maybeTriggerWakeup();
             
             // throw InterruptException if this thread is interrupted
@@ -243,9 +264,11 @@ public class ConsumerNetworkClient implements Closeable {
 
             // try again to send requests since buffer space may have been
             // cleared or a connect finished in the poll
+            // 再次调用trySend循环处理unsent中缓存的请求
             trySend(now);
 
             // fail requests that couldn't be sent if they have expired
+            // 处理unsent中超时的请求
             failExpiredRequests(now);
         }
 
@@ -258,10 +281,12 @@ public class ConsumerNetworkClient implements Closeable {
      * nor will it execute any delayed tasks.
      */
     public void pollNoWakeup() {
+        // wakeupDisabledCount++
         disableWakeups();
         try {
             poll(0, time.milliseconds(), null);
         } finally {
+            // wakeupDisabledCount--
             enableWakeups();
         }
     }
@@ -275,7 +300,10 @@ public class ConsumerNetworkClient implements Closeable {
     public boolean awaitPendingRequests(Node node, long timeoutMs) {
         long startMs = time.milliseconds();
         long remainingMs = timeoutMs;
-
+        /**
+         * pendingRequestCount()会获取对应Node中unsent暂存的请求数量与InFlightRequests中正在发送的请求数量之和
+         * 当请求还未全部完成，就一直进行poll操作
+         */
         while (pendingRequestCount(node) > 0 && remainingMs > 0) {
             poll(remainingMs);
             remainingMs = timeoutMs - (time.milliseconds() - startMs);
@@ -327,22 +355,28 @@ public class ConsumerNetworkClient implements Closeable {
         if (completedRequestsFired)
             client.wakeup();
     }
-
+    // 检查消费者与每个Node之间的连接状态
     private void checkDisconnects(long now) {
         // any disconnects affecting requests that have already been transmitted will be handled
         // by NetworkClient, so we just need to check whether connections for any of the unsent
         // requests have been disconnected; if they have, then we complete the corresponding future
         // and set the disconnect flag in the ClientResponse
         Iterator<Map.Entry<Node, List<ClientRequest>>> iterator = unsent.entrySet().iterator();
+        // 遍历unsent的键值对
         while (iterator.hasNext()) {
             Map.Entry<Node, List<ClientRequest>> requestEntry = iterator.next();
+            // 获取Node
             Node node = requestEntry.getKey();
+            // 检查Node连接是否失败
             if (client.connectionFailed(node)) {
                 // Remove entry before invoking request callback to avoid callbacks handling
                 // coordinator failures traversing the unsent list again.
+                // 如果失败就将相应的键值对从unsent中移除
                 iterator.remove();
+                // 遍历处理所有移除的ClientRequest的回调
                 for (ClientRequest request : requestEntry.getValue()) {
                     RequestFutureCompletionHandler handler = (RequestFutureCompletionHandler) request.callback();
+                    // 注意第三个参数为true，表示这是由于断开连接而产生的回调
                     handler.onComplete(new ClientResponse(request.makeHeader(), request.callback(), request.destination(),
                             request.createdTimeMs(), now, true, null, null));
                 }
@@ -350,21 +384,32 @@ public class ConsumerNetworkClient implements Closeable {
         }
     }
 
+    // 处理unsent中超时的请求
     private void failExpiredRequests(long now) {
         // clear all expired unsent requests and fail their corresponding futures
         Iterator<Map.Entry<Node, List<ClientRequest>>> iterator = unsent.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Node, List<ClientRequest>> requestEntry = iterator.next();
+            // 获取ClientRequest集合迭代器
             Iterator<ClientRequest> requestIterator = requestEntry.getValue().iterator();
             while (requestIterator.hasNext()) {
+                // 得到ClientRequest
                 ClientRequest request = requestIterator.next();
+                /**
+                 * 判断ClientRequest是否超时，判断方式
+                 * 1. now - unsentExpiryMs：即从当前时间往前推unsentExpiryMs毫秒（request.timeout.ms）
+                 * 2. 如果ClientRequest的创建时间还在这个时间之前，说明超时
+                 */
                 if (request.createdTimeMs() < now - unsentExpiryMs) {
+                    // 超时处理，使用ClientRequest的handle抛出TimeoutException异常
                     RequestFutureCompletionHandler handler = (RequestFutureCompletionHandler) request.callback();
                     handler.onFailure(new TimeoutException("Failed to send request after " + unsentExpiryMs + " ms."));
+                    // 从集合中移除
                     requestIterator.remove();
                 } else
                     break;
             }
+            // 如果对应的ClientRequest已经空了，就将其从unsent中移除
             if (requestEntry.getValue().isEmpty())
                 iterator.remove();
         }
@@ -386,16 +431,21 @@ public class ConsumerNetworkClient implements Closeable {
         firePendingCompletedRequests();
     }
 
+    // 发送unsent缓存中的ClientRequest
     private boolean trySend(long now) {
         // send any requests that can be sent now
         boolean requestsSent = false;
+        // 遍历每个<Node, List<ClientRequest>>键值对
         for (Map.Entry<Node, List<ClientRequest>> requestEntry: unsent.entrySet()) {
             Node node = requestEntry.getKey();
             Iterator<ClientRequest> iterator = requestEntry.getValue().iterator();
             while (iterator.hasNext()) {
                 ClientRequest request = iterator.next();
+                // 检查节点是否可用
                 if (client.ready(node, now)) {
+                    // 将请求绑定到KafkaChannel上
                     client.send(request, now);
+                    // 从集合中移除对应的ClientRequest
                     iterator.remove();
                     requestsSent = true;
                 }
@@ -405,9 +455,12 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     private void maybeTriggerWakeup() {
+        // 检测wakeup和wakeupDisabledCount，查看是否有其他线程中断
         if (wakeupDisabledCount == 0 && wakeup.get()) {
             log.trace("Raising wakeup exception in response to user wakeup");
+            // 设置中断标志
             wakeup.set(false);
+            // 如果有，抛出WakeupException，中断当前poll()方法操作
             throw new WakeupException();
         }
     }
@@ -464,6 +517,7 @@ public class ConsumerNetworkClient implements Closeable {
      */
     public void tryConnect(Node node) {
         synchronized (this) {
+            // 检查Node是否准备好，如果准备好了就尝试连接
             client.ready(node, time.milliseconds());
         }
     }
@@ -486,10 +540,12 @@ public class ConsumerNetworkClient implements Closeable {
                 int correlation = requestHeader.correlationId();
                 log.debug("Cancelled {} request {} with correlation id {} due to node {} being disconnected",
                         api, requestHeader, correlation, response.destination());
+                // 调用RequestFuture的raise()方法，传递DisconnectException异常
                 future.raise(DisconnectException.INSTANCE);
             } else if (response.versionMismatch() != null) {
                 future.raise(response.versionMismatch());
             } else {
+                // 否则正常完成回调，该方法来自RequestFuture类
                 future.complete(response);
             }
         }

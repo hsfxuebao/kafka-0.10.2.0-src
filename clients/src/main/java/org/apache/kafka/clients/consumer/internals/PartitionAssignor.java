@@ -69,7 +69,9 @@ public interface PartitionAssignor {
     String name();
 
     class Subscription {
+        // 订阅的Topic集合
         private final List<String> topics;
+        // 用户自定义数据
         private final ByteBuffer userData;
 
         public Subscription(List<String> topics, ByteBuffer userData) {
@@ -97,8 +99,11 @@ public interface PartitionAssignor {
         }
     }
 
+    // 保存了分区的分配结果
     class Assignment {
+        // 分配给某个消费者的TopicPartition集合
         private final List<TopicPartition> partitions;
+        // 用户自定义数据
         private final ByteBuffer userData;
 
         public Assignment(List<TopicPartition> partitions, ByteBuffer userData) {

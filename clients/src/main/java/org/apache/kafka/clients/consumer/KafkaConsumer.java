@@ -508,21 +508,29 @@ import java.util.regex.Pattern;
 public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
+    // 标识没有线程使用过当前KafkaConsumer实例
     private static final long NO_CURRENT_THREAD = -1L;
+    // Client的ID生成器
     private static final AtomicInteger CONSUMER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.consumer";
     static final long DEFAULT_CLOSE_TIMEOUT_MS = 30 * 1000;
 
+    // 消费者标识
     private final String clientId;
+    // 用于Consumer与服务端GroupCoordinator之间的通信
     private final ConsumerCoordinator coordinator;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
+    // 负责用于从服务端获取消息
     private final Fetcher<K, V> fetcher;
+    // 消费者拦截器，类似于ProducerInterceptors
     private final ConsumerInterceptors<K, V> interceptors;
 
     private final Time time;
+    // 负责消费者与Kafka服务端的网络通信
     private final ConsumerNetworkClient client;
     private final Metrics metrics;
+    // 维护消费者的消费状态
     private final SubscriptionState subscriptions;
     private final Metadata metadata;
     private final long retryBackoffMs;
@@ -531,8 +539,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
     // currentThread holds the threadId of the current thread accessing KafkaConsumer
     // and is used to prevent multi-threaded access
+    // 记录了当前使用KafkaConsumer的线程的ID，用于防止多线程访问KafkaConsumer
     private final AtomicLong currentThread = new AtomicLong(NO_CURRENT_THREAD);
     // refcount is used to allow reentrant access by the thread who has acquired currentThread
+    // 记录当前使用KafkaConsumer的线程的重入次数
     private final AtomicInteger refcount = new AtomicInteger(0);
 
     /**
@@ -605,18 +615,25 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                           Deserializer<V> valueDeserializer) {
         try {
             log.debug("Starting the Kafka consumer");
+            // 获取配置：请求超时时间默认305000ms
             this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+            // 会话超时时间默认10000ms
             int sessionTimeOutMs = config.getInt(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG);
+            // 拉取操作最大等待时间500ms
             int fetchMaxWaitMs = config.getInt(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG);
+            // 校验配置
             if (this.requestTimeoutMs <= sessionTimeOutMs || this.requestTimeoutMs <= fetchMaxWaitMs)
                 throw new ConfigException(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG + " should be greater than " + ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG + " and " + ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG);
+            // Time工具类
             this.time = Time.SYSTEM;
-
+            // 获取消费者客户端ID
             String clientId = config.getString(ConsumerConfig.CLIENT_ID_CONFIG);
             if (clientId.length() <= 0)
+                // 如果没有指定则自动分配，按"consumer-" + 自增序列的格式
                 clientId = "consumer-" + CONSUMER_CLIENT_ID_SEQUENCE.getAndIncrement();
             this.clientId = clientId;
             Map<String, String> metricsTags = new LinkedHashMap<>();
+            // 监控信息配置
             metricsTags.put("client-id", clientId);
             MetricConfig metricConfig = new MetricConfig().samples(config.getInt(ConsumerConfig.METRICS_NUM_SAMPLES_CONFIG))
                     .timeWindow(config.getLong(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG), TimeUnit.MILLISECONDS)
@@ -625,14 +642,18 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     MetricsReporter.class);
             reporters.add(new JmxReporter(JMX_PREFIX));
             this.metrics = new Metrics(metricConfig, reporters, time);
+
+            // 重试时间默认100ms
             this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
 
             // load interceptors and make sure they get clientId
             Map<String, Object> userProvidedConfigs = config.originals();
             userProvidedConfigs.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
+            // 根据配置获取拦截器列表
             List<ConsumerInterceptor<K, V>> interceptorList = (List) (new ConsumerConfig(userProvidedConfigs)).getConfiguredInstances(ConsumerConfig.INTERCEPTOR_CLASSES_CONFIG,
                     ConsumerInterceptor.class);
             this.interceptors = interceptorList.isEmpty() ? null : new ConsumerInterceptors<>(interceptorList);
+            // 根据配置创建键值序列化器
             if (keyDeserializer == null) {
                 this.keyDeserializer = config.getConfiguredInstance(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
                         Deserializer.class);
@@ -650,12 +671,18 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 this.valueDeserializer = valueDeserializer;
             }
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keyDeserializer, valueDeserializer, reporters, interceptorList);
+            // 创建Metadata实例
             this.metadata = new Metadata(retryBackoffMs, config.getLong(ConsumerConfig.METADATA_MAX_AGE_CONFIG), false, clusterResourceListeners);
+            // 获取配置的broker的地址列表
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config.getList(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG));
+            // 更新集群元数据
             this.metadata.update(Cluster.bootstrap(addresses), 0);
             String metricGrpPrefix = "consumer";
+            // 创建KafkaChannel构建器
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
+            // 创建NetworkClient实例
             NetworkClient netClient = new NetworkClient(
+                    // 创建Selector实例
                     new Selector(config.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), metrics, time, metricGrpPrefix, channelBuilder),
                     this.metadata,
                     clientId,
@@ -666,13 +693,18 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG),
                     time,
                     true);
+            // 使用ConsumerNetworkClient包装创建的NetworkClient实例
             this.client = new ConsumerNetworkClient(netClient, metadata, time, retryBackoffMs,
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG));
+            // 根据配置获取offset重置策略
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
+            // 根据重置策略创建SubscriptionState对象
             this.subscriptions = new SubscriptionState(offsetResetStrategy);
+            // 根据配置获取分区分配器列表
             List<PartitionAssignor> assignors = config.getConfiguredInstances(
                     ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
                     PartitionAssignor.class);
+            // 根据配置创建ConsumerCoordinator
             this.coordinator = new ConsumerCoordinator(this.client,
                     config.getString(ConsumerConfig.GROUP_ID_CONFIG),
                     config.getInt(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG),
@@ -689,6 +721,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG),
                     this.interceptors,
                     config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG));
+            // 根据配置创建Fetcher拉取器
             this.fetcher = new Fetcher<>(this.client,
                     config.getInt(ConsumerConfig.FETCH_MIN_BYTES_CONFIG),
                     config.getInt(ConsumerConfig.FETCH_MAX_BYTES_CONFIG),
@@ -704,7 +737,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     metricGrpPrefix,
                     this.time,
                     this.retryBackoffMs);
-
+            // 打印无用配置
             config.logUnused();
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId);
 
@@ -809,12 +842,14 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void subscribe(Collection<String> topics, ConsumerRebalanceListener listener) {
+        // 检查是否多线程调用
         acquire();
         try {
             if (topics == null) {
                 throw new IllegalArgumentException("Topic collection to subscribe to cannot be null");
             } else if (topics.isEmpty()) {
                 // treat subscribing to empty topic list as the same as unsubscribing
+                // topics为空时，表示取消订阅
                 this.unsubscribe();
             } else {
                 for (String topic : topics) {
@@ -822,10 +857,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                         throw new IllegalArgumentException("Topic collection to subscribe to cannot contain null or empty topic");
                 }
                 log.debug("Subscribed to topic(s): {}", Utils.join(topics, ", "));
+                // 调用SubscriptionState实例的subscribe()方法，更新状态记录
                 this.subscriptions.subscribe(new HashSet<>(topics), listener);
+                // 使用metadata已知主题集合记录订阅的主题
                 metadata.setTopics(subscriptions.groupSubscription());
             }
         } finally {
+            // 释放重入次数
             release();
         }
     }
@@ -850,6 +888,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void subscribe(Collection<String> topics) {
+        // 使用NoOpConsumerRebalanceListener重均衡监听器
         subscribe(topics, new NoOpConsumerRebalanceListener());
     }
 
@@ -875,16 +914,21 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void subscribe(Pattern pattern, ConsumerRebalanceListener listener) {
+        // 检查是否多线程调用
         acquire();
         try {
             if (pattern == null)
                 throw new IllegalArgumentException("Topic pattern to subscribe to cannot be null");
             log.debug("Subscribed to pattern: {}", pattern);
+            // 调用SubscriptionState实例的subscribe()方法，更新状态记录
             this.subscriptions.subscribe(pattern, listener);
+            // 标记需要更新所有的主题元数据
             this.metadata.needMetadataForAllTopics(true);
+            // 设置强制更新
             this.metadata.requestUpdate();
             this.coordinator.updatePatternSubscription(metadata.fetch());
         } finally {
+            // 释放重入次数
             release();
         }
     }
@@ -922,6 +966,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void assign(Collection<TopicPartition> partitions) {
+        // 检查是否有并发操作
         acquire();
         try {
             if (partitions == null) {
@@ -980,8 +1025,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public ConsumerRecords<K, V> poll(long timeout) {
+        // 检查是否有并发操作
         acquire();
         try {
+            // 检查超时参数
             if (timeout < 0)
                 throw new IllegalArgumentException("Timeout must not be negative");
 
@@ -989,10 +1036,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
 
             // poll for new data until the timeout expires
+            // 记录当前时间用于计算是否超时
             long start = time.milliseconds();
             long remaining = timeout;
             do {
+                // 调用pollOnce()方法拉取消息
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
+                // 检查是否有消息返回
                 if (!records.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
                     // and avoid block waiting for their responses to enable pipelining while the user
@@ -1000,22 +1050,28 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
+                    // 处理拉取返回的消息之前，先发送一次FetchRequest，使消息响应处理与请求的网络传输并行处理，以提高性能
                     if (fetcher.sendFetches() > 0) {
+                        // 将FetchRequest发送出去，不会阻塞，不能被中断，不会执行定时任务
                         client.pollNoWakeup();
                     }
-
+                    // 处理拦截器操作
                     if (this.interceptors == null)
+                        // 没有拦截器，直接返回ConsumerRecords对象
                         return new ConsumerRecords<>(records);
                     else
+                        // 使用拦截器处理后返回
                         return this.interceptors.onConsume(new ConsumerRecords<>(records));
                 }
-
+                // 计算已用时间
                 long elapsed = time.milliseconds() - start;
+                // 计算剩余时间
                 remaining = timeout - elapsed;
             } while (remaining > 0);
-
+            // 没有拉取到消息，返回空记录
             return ConsumerRecords.empty();
         } finally {
+            // 释放重入次数
             release();
         }
     }
@@ -1384,8 +1440,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     public void pause(Collection<TopicPartition> partitions) {
         acquire();
         try {
+            // 遍历主题分区
             for (TopicPartition partition: partitions) {
                 log.debug("Pausing partition {}", partition);
+                // 调用SubscriptionState进行暂停操作
                 subscriptions.pause(partition);
             }
         } finally {
@@ -1617,12 +1675,24 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * supported).
      * @throws IllegalStateException if the consumer has been closed
      * @throws ConcurrentModificationException if another thread already has the lock
+     *
+     * 检测是否有其他线程尝试并发操作KafkaConsumer
      */
     private void acquire() {
+        // 确保KafkaConsumer没有被关闭
         ensureNotClosed();
+        // 当前线程ID
         long threadId = Thread.currentThread().getId();
+        /**
+         * 比对当前线程与currentThread保存的线程的ID
+         * 如果不同，尝试用CAS方式更新currentThread为当前线程的ID
+         * 需要注意的是，只有在currentThread的值为NO_CURRENT_THREAD（-1）时才可能修改成功
+         * 也即是，只有在之前没有线程操作KafkaConsumer时，才能修改成功，以防止多线程操作KafkaConsumer
+         */
         if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
+            // 抛出ConcurrentModificationException异常
             throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
+        // 当前使用KafkaConsumer的线程的重入次数加1
         refcount.incrementAndGet();
     }
 
@@ -1630,6 +1700,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * Release the light lock protecting the consumer from multi-threaded access.
      */
     private void release() {
+        // 当前使用KafkaConsumer的线程的重入次数为0时，才表示KafkaConsumer被释放，将currentThread置为NO_CURRENT_THREAD
         if (refcount.decrementAndGet() == 0)
             currentThread.set(NO_CURRENT_THREAD);
     }

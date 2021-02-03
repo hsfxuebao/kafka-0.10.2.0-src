@@ -37,20 +37,27 @@ public final class RecordBatch {
     private static final Logger log = LoggerFactory.getLogger(RecordBatch.class);
 
     final long createdMs;
+    // 当前RecordBatch中缓存的消息都会发送给次TopicPartition
     final TopicPartition topicPartition;
+    // 标识RecordBatch状态的Future对象
     final ProduceRequestResult produceFuture;
 
     private final List<Thunk> thunks = new ArrayList<>();
     private final MemoryRecordsBuilder recordsBuilder;
 
+    // 尝试发送当前RecordBatch的次数
     volatile int attempts;
+    // 记录保存的Record数量
     int recordCount;
     int maxRecordSize;
     long drainedMs;
+    // 最后一次尝试发送的时间戳
     long lastAttemptMs;
+    // 最后一次向RecordBatch追加消息的时间戳
     long lastAppendTime;
     private String expiryErrorMessage;
     private AtomicBoolean completed;
+    // 是否正在重试
     private boolean retry;
 
     public RecordBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long now) {

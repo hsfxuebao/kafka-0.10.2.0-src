@@ -64,14 +64,24 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCoordinator.class);
 
+    /**
+     * 在消费者发送的JoinGroupRequest请求中包含了消费者自身支持的PartitionAssignor信息，
+     * GroupCoordinator从所有消费者都支持的分配策略中选择一个，通知Leader使用此分配策略进行分区分配。
+     * 此字段的值通过partition.assignment.strategy参数配置，可以配置多个。
+     */
     private final List<PartitionAssignor> assignors;
+    // Kafka集群元数据
     private final Metadata metadata;
     private final ConsumerCoordinatorMetrics sensors;
     private final SubscriptionState subscriptions;
     private final OffsetCommitCallback defaultOffsetCommitCallback;
+    // 是否开启了自动提交offset（enable.auto.commit）
     private final boolean autoCommitEnabled;
+    // 自动提交offset的定时任务
     private final int autoCommitIntervalMs;
+    // 拦截器集合
     private final ConsumerInterceptors<?, ?> interceptors;
+    // 是否排除内部Topic
     private final boolean excludeInternalTopics;
     private final AtomicInteger pendingAsyncCommits;
 
@@ -81,7 +91,23 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private boolean isLeader = false;
     private Set<String> joinedSubscription;
+    /**
+     * 用来存储Metadata的快照信息，主要用来检测Topic是否发生了分区数量的变化。
+     * 在ConsumerCoordinator的构造方法中，会为Metadata添加一个监听器，当Metadata更新时会做下面几件事：
+     * - 如果是AUTO_PATTERN模式，则使用用户自定义的正则表达式过滤Topic，
+     *      得到需要订阅的Topic集合后，设置到SubscriptionState的subscription集合和groupSubscription集合中。
+     * - 如果是AUTO_PATTERN或AUTO_TOPICS模式，为当前Metadata做一个快照，这个快照底层是使用HashMap记录每个Topic中Partition的个数。
+     *      将新旧快照进行比较，发生变化的话，则表示消费者订阅的Topic发生分区数量变化，
+     *      则将SubscriptionState的needsPartitionAssignment字段置为true，需要重新进行分区分配。
+     * - 使用metadataSnapshot字段记录变化后的新快照。
+     */
     private MetadataSnapshot metadataSnapshot;
+    /**
+     * 用来存储Metadata的快照信息，不过是用来检测Partition分配的过程中有没有发生分区数量变化。
+     * 具体是在Leader消费者开始分区分配操作前，使用此字段记录Metadata快照；
+     * 收到SyncGroupResponse后，会比较此字段记录的快照与当前Metadata是否发生变化。
+     * 如果发生变化，则要重新进行分区分配。在后面的介绍中还会分析上述过程。
+     */
     private MetadataSnapshot assignmentSnapshot;
     private long nextAutoCommitDeadline;
 
@@ -104,6 +130,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                                int autoCommitIntervalMs,
                                ConsumerInterceptors<?, ?> interceptors,
                                boolean excludeInternalTopics) {
+        // 调用父类AbstractCoordinator的构造器
         super(client,
                 groupId,
                 rebalanceTimeoutMs,
@@ -113,22 +140,32 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 metricGrpPrefix,
                 time,
                 retryBackoffMs);
+        // 设置强制更新集群元数据
         this.metadata = metadata;
+        // 根据消费者的SubscriptionState实例和集群元数据构建元数据快照
         this.metadataSnapshot = new MetadataSnapshot(subscriptions, metadata.fetch());
+        // 记录消费者的SubscriptionState实例
         this.subscriptions = subscriptions;
+        // offset提交回调
         this.defaultOffsetCommitCallback = new DefaultOffsetCommitCallback();
+        // 是否自动提交offset
         this.autoCommitEnabled = autoCommitEnabled;
+
         this.autoCommitIntervalMs = autoCommitIntervalMs;
+        // 分区分配器集合
         this.assignors = assignors;
         this.completedOffsetCommits = new ConcurrentLinkedQueue<>();
         this.sensors = new ConsumerCoordinatorMetrics(metrics, metricGrpPrefix);
+        // 拦截器集合
         this.interceptors = interceptors;
+        // 是否排除Kafka内部使用的Topic
         this.excludeInternalTopics = excludeInternalTopics;
         this.pendingAsyncCommits = new AtomicInteger();
 
         if (autoCommitEnabled)
+            // 如果设置了自动提交offset，根据配置提交间隔时间
             this.nextAutoCommitDeadline = time.milliseconds() + autoCommitIntervalMs;
-
+        // 设置强制更新集群元数据
         this.metadata.requestUpdate();
         addMetadataListener();
     }
@@ -152,7 +189,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     public void updatePatternSubscription(Cluster cluster) {
         final Set<String> topicsToSubscribe = new HashSet<>();
-
+        // 权限验证
         for (String topic : cluster.topics())
             if (subscriptions.subscribedPattern().matcher(topic).matches() &&
                     !(excludeInternalTopics && cluster.internalTopics().contains(topic)))
@@ -162,6 +199,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         // note we still need to update the topics contained in the metadata. Although we have
         // specified that all topics should be fetched, only those set explicitly will be retained
+        // 更新Metadata需要记录元数据的Topic集合
         metadata.setTopics(subscriptions.groupSubscription());
     }
 
@@ -170,16 +208,21 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             @Override
             public void onMetadataUpdate(Cluster cluster) {
                 // if we encounter any unauthorized topics, raise an exception to the user
+                // 当非AUTO_PATTERN模式时，如果非授权的主题不为空，则抛出异常
                 if (!cluster.unauthorizedTopics().isEmpty())
                     throw new TopicAuthorizationException(new HashSet<>(cluster.unauthorizedTopics()));
-
+                // AUTO_PATTERN模式的处理
                 if (subscriptions.hasPatternSubscription())
                     updatePatternSubscription(cluster);
 
                 // check if there are any changes to the metadata which should trigger a rebalance
+                // 检测是否为AUTO_PATTERN或AUTO_TOPICS模式
                 if (subscriptions.partitionsAutoAssigned()) {
+                    // 根据新的subscriptions和cluster数据创建快照
                     MetadataSnapshot snapshot = new MetadataSnapshot(subscriptions, cluster);
+                    // 比较新旧快照，如果不相等，则更新快照，并标识需要重新进行分区分配
                     if (!snapshot.equals(metadataSnapshot))
+                        // 记录快照
                         metadataSnapshot = snapshot;
                 }
             }
@@ -187,13 +230,16 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private PartitionAssignor lookupAssignor(String name) {
+        // 遍历所有的PartitionAssignor
         for (PartitionAssignor assignor : this.assignors) {
+            // 匹配对应的PartitionAssignor：range或roundrobin
             if (assignor.name().equals(name))
                 return assignor;
         }
         return null;
     }
 
+    // 处理从SyncGroupResponse中的到的分区分配结果
     @Override
     protected void onJoinComplete(int generation,
                                   String memberId,
@@ -203,16 +249,19 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         if (!isLeader)
             assignmentSnapshot = null;
 
+        // 获取指定的分区器
         PartitionAssignor assignor = lookupAssignor(assignmentStrategy);
         if (assignor == null)
             throw new IllegalStateException("Coordinator selected invalid assignment protocol: " + assignmentStrategy);
-
+        // 获取分区分配信息
         Assignment assignment = ConsumerProtocol.deserializeAssignment(assignmentBuffer);
 
         // set the flag to refresh last committed offsets
+        // 设置needsFetchCommittedOffsets为true
         subscriptions.needRefreshCommits();
 
         // update partition assignment
+        // 根据新的分区信息更新SubscriptionState的assignment集合
         subscriptions.assignFromSubscribed(assignment.partitions());
 
         // check if the assignment contains some topics that were not in the original
@@ -242,16 +291,20 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         client.ensureFreshMetadata();
 
         // give the assignor a chance to update internal state based on the received assignment
+        // 将assignment传递给onAssignment()方法，让分区分配器有机会更新内部状态
+        // 该方法默认是空实现，用户自定义分区器时可以重写该方法
         assignor.onAssignment(assignment);
 
         // reschedule the auto commit starting from now
         this.nextAutoCommitDeadline = time.milliseconds() + autoCommitIntervalMs;
 
         // execute the user's callback after rebalance
+        // 获取Rebalance监听器
         ConsumerRebalanceListener listener = subscriptions.listener();
         log.info("Setting newly assigned partitions {} for group {}", subscriptions.assignedPartitions(), groupId);
         try {
             Set<TopicPartition> assigned = new HashSet<>(subscriptions.assignedPartitions());
+            // 调用监听器
             listener.onPartitionsAssigned(assigned);
         } catch (WakeupException | InterruptException e) {
             throw e;
@@ -272,6 +325,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         invokeCompletedOffsetCommitCallbacks();
 
         if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
+            // 确保GroupCoordinator已就绪，如果没有就绪会一直阻塞
             ensureCoordinatorReady();
             now = time.milliseconds();
         }

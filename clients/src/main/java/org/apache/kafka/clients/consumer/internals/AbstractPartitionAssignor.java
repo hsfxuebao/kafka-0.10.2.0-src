@@ -50,24 +50,34 @@ public abstract class AbstractPartitionAssignor implements PartitionAssignor {
     public Map<String, Assignment> assign(Cluster metadata, Map<String, Subscription> subscriptions) {
         Set<String> allSubscribedTopics = new HashSet<>();
         Map<String, List<String>> topicSubscriptions = new HashMap<>();
+        // 解析subscriptions集合，去除userData信息
         for (Map.Entry<String, Subscription> subscriptionEntry : subscriptions.entrySet()) {
             List<String> topics = subscriptionEntry.getValue().topics();
+            // 只取出了topics数据
             allSubscribedTopics.addAll(topics);
             topicSubscriptions.put(subscriptionEntry.getKey(), topics);
         }
-
+        // 统计每个Topic的分区个数
         Map<String, Integer> partitionsPerTopic = new HashMap<>();
         for (String topic : allSubscribedTopics) {
+            // 从集群元数据中获取Topic对应的分区个数
             Integer numPartitions = metadata.partitionCountForTopic(topic);
             if (numPartitions != null && numPartitions > 0)
+                // 记录到Map
                 partitionsPerTopic.put(topic, numPartitions);
             else
                 log.debug("Skipping assignment for topic {} since no metadata is available", topic);
         }
 
+        /**
+         * 将分区分配的具体逻辑委托给assign()重载方法，由子类重写实现；传入的参数结构：
+         * partitionsPerTopic：集群元数据中保存的信息，键为Topic名称，值为该Topic拥有的分区数；
+         * topicSubscriptions：Group里每个Member订阅的主题，键为Member ID，值为订阅的主题集合
+         */
         Map<String, List<TopicPartition>> rawAssignments = assign(partitionsPerTopic, topicSubscriptions);
 
         // this class has maintains no user data, so just wrap the results
+        // 整理分区分配结果，即从Map<String, List<TopicPartition>>转换为<String, Assignment>
         Map<String, Assignment> assignments = new HashMap<>();
         for (Map.Entry<String, List<TopicPartition>> assignmentEntry : rawAssignments.entrySet())
             assignments.put(assignmentEntry.getKey(), new Assignment(assignmentEntry.getValue()));

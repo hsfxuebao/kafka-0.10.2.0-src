@@ -22,6 +22,7 @@ public abstract class RequestFutureAdapter<F, T> {
 
     public abstract void onSuccess(F value, RequestFuture<T> future);
 
+    // onFailure已经实现了
     public void onFailure(RuntimeException e, RequestFuture<T> future) {
         future.raise(e);
     }

@@ -78,22 +78,33 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(Fetcher.class);
 
+    // 负责网络通信
     private final ConsumerNetworkClient client;
     private final Time time;
+    // 在服务端收到FetchRequest之后并不是立即响应，而是当可返回的消息数据积累到至少minBytes个字节时才进行响应。
+    // 每个FetchResponse中包含多条消息，提高网络的有效负载
     private final int minBytes;
+    // 等待FetchResponse的最长时间，服务端根据此时间决定何时进行响应
     private final int maxBytes;
+
     private final int maxWaitMs;
+    // 每次fetch操作的最大字节数
     private final int fetchSize;
+    // 重试退避时间
     private final long retryBackoffMs;
+    // 每次获取Record的最大数量
     private final int maxPollRecords;
     private final boolean checkCrcs;
+    // 集群元数据
     private final Metadata metadata;
     private final FetchManagerMetrics sensors;
+    // 记录了每个TopicPartition的消费情况
     private final SubscriptionState subscriptions;
+    // 每个FetchResponse首先会转换为CompletedFetch对象进入此队列缓存
     private final ConcurrentLinkedQueue<CompletedFetch> completedFetches;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
-
+    // 保存了CompletedFetch解析后的结果集合
     private PartitionRecords<K, V> nextInLineRecords = null;
 
     public Fetcher(ConsumerNetworkClient client,
@@ -170,19 +181,30 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * Set-up a fetch request for any node that we have assigned partitions for which doesn't already have
      * an in-flight fetch or pending fetch data.
      * @return number of fetches sent
+     * 发送拉取消息的请求
      */
     public int sendFetches() {
         Map<Node, FetchRequest.Builder> fetchRequestMap = createFetchRequests();
+        // 遍历createFetchRequest()方法得到的待发送请求字典，类型Map<Node, FetchRequest>
         for (Map.Entry<Node, FetchRequest.Builder> fetchEntry : fetchRequestMap.entrySet()) {
+            // 得到FetchRequest对象
             final FetchRequest.Builder request = fetchEntry.getValue();
             final Node fetchTarget = fetchEntry.getKey();
 
             log.debug("Sending fetch for partitions {} to broker {}", request.fetchData().keySet(), fetchTarget);
+            // 使用ConsumerNetworkClient发送请求
             client.send(fetchTarget, request)
+                    // 并注册FetchResponse处理方法
                     .addListener(new RequestFutureListener<ClientResponse>() {
+                        // 处理FetchResponse响应数据
                         @Override
                         public void onSuccess(ClientResponse resp) {
+                            // 从ClientResponse响应对象数据组装FetchResponse对象
                             FetchResponse response = (FetchResponse) resp.responseBody();
+                            /**
+                             * 得到响应信息中所有的分区信息
+                             * responseData()方法返回值类型为Map<TopicPartition, PartitionData>
+                             */
                             if (!matchesRequestedPartitions(request, response)) {
                                 // obviously we expect the broker to always send us valid responses, so this check
                                 // is mainly for test cases where mock fetch responses must be manually crafted.
@@ -194,11 +216,14 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
                             Set<TopicPartition> partitions = new HashSet<>(response.responseData().keySet());
                             FetchResponseMetricAggregator metricAggregator = new FetchResponseMetricAggregator(sensors, partitions);
-
+                            // 遍历responseData()方法返回的响应信息
                             for (Map.Entry<TopicPartition, FetchResponse.PartitionData> entry : response.responseData().entrySet()) {
                                 TopicPartition partition = entry.getKey();
+                                // 从对应的FetchRequest中获取分区对应的offset
                                 long fetchOffset = request.fetchData().get(partition).offset;
+                                // 响应数据
                                 FetchResponse.PartitionData fetchData = entry.getValue();
+                                // 将响应数据构造为CompletedFetch对象添加到completedFetches集合
                                 completedFetches.add(new CompletedFetch(partition, fetchOffset, fetchData, metricAggregator,
                                         request.version()));
                             }
@@ -236,16 +261,33 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     public void updateFetchPositions(Set<TopicPartition> partitions) {
         // reset the fetch position to the committed position
         for (TopicPartition tp : partitions) {
+            /**
+             * 检测是否需要重置操作
+             * 1. subscriptions.isAssigned(tp)：当前消费者是否被指定了tp分区
+             * 2. subscriptions.isFetchable(tp)
+             *      isAssigned(tp) ：当前消费者是否被指定了tp分区
+             *      assignedState(tp).isFetchable()：当前分区是否是可以被拉取的
+             *          !paused：当前分区是否是非暂停拉取状态的
+             *          hasValidPosition()：position是否为null
+             * 结果：
+             * - 如果当前消费者没有被指定消费tp分区，那么不需要重置
+             * - 如果当前消费者被指定消费tp分区，且tp分区是非暂停拉取状态，同时position值不为null，那么不需要重置
+             */
             if (!subscriptions.isAssigned(tp) || subscriptions.hasValidPosition(tp))
                 continue;
 
+            // 走到这里说明需要重置position
+            // 判断是否指定了重置策略
             if (subscriptions.isOffsetResetNeeded(tp)) {
+                // 指定了重置策略，按照指定策略进行更新
                 resetOffset(tp);
             } else if (subscriptions.committed(tp) == null) {
                 // there's no committed position, so we need to reset with the default strategy
+                // 最近一次该分区的提交为空，按照默认的defaultResetStrategy策略进行重置
                 subscriptions.needOffsetReset(tp);
                 resetOffset(tp);
             } else {
+                // 最近一次该分区的提交不为空，则将position重置为最近一次提交的offset
                 long committed = subscriptions.committed(tp).offset();
                 log.debug("Resetting offset for partition {} to the committed offset {}", tp, committed);
                 subscriptions.seek(tp, committed);
@@ -356,17 +398,24 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      *
      * @param partition The given partition that needs reset offset
      * @throws org.apache.kafka.clients.consumer.NoOffsetForPartitionException If no offset reset strategy is defined
+     *
+     * 根据重置策略更新分区的position
      */
     private void resetOffset(TopicPartition partition) {
+        // 获取分区对应的重置策略
         OffsetResetStrategy strategy = subscriptions.resetStrategy(partition);
         log.debug("Resetting offset for partition {} to {} offset.", partition, strategy.name().toLowerCase(Locale.ROOT));
         final long timestamp;
+        // 根据重置策略选择时间戳
         if (strategy == OffsetResetStrategy.EARLIEST)
+            // 最早策略
             timestamp = ListOffsetRequest.EARLIEST_TIMESTAMP;
         else if (strategy == OffsetResetStrategy.LATEST)
+            // 最晚策略
             timestamp = ListOffsetRequest.LATEST_TIMESTAMP;
         else
             throw new NoOffsetForPartitionException(partition);
+        // 向分区的Leader副本所在的节点发送OffsetsRequest请求，得到对应的offset，会阻塞
         Map<TopicPartition, OffsetData> offsetsByTimes = retrieveOffsetsByTimes(
                 Collections.singletonMap(partition, timestamp), Long.MAX_VALUE, false);
         OffsetData offsetData = offsetsByTimes.get(partition);
@@ -374,6 +423,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             throw new NoOffsetForPartitionException(partition);
         long offset = offsetData.offset;
         // we might lose the assignment while fetching the offset, so check it is still active
+        // 更新分区的position为得到的offset
         if (subscriptions.isAssigned(partition))
             this.subscriptions.seek(partition, offset);
     }
@@ -400,13 +450,15 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         long startMs = time.milliseconds();
         long remaining = timeout;
         do {
+            // 构造OffsetsRequest请求到unsent，等待发送
             RequestFuture<Map<TopicPartition, OffsetData>> future =
                     sendListOffsetRequests(requireTimestamps, timestampsToSearch);
+            // 发送请求
             client.poll(future, remaining);
 
             if (!future.isDone())
                 break;
-
+            // 请求成功
             if (future.succeeded())
                 return future.value();
 
@@ -419,8 +471,10 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 break;
 
             if (future.exception() instanceof InvalidMetadataException)
+                // 元数据无效异常，更新元数据
                 client.awaitMetadataUpdate(remaining);
             else
+                // 退避一段时间后再次请求
                 time.sleep(Math.min(remaining, retryBackoffMs));
 
             elapsed = time.milliseconds() - startMs;
@@ -461,9 +515,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      *         the defaultResetPolicy is NONE
      */
     public Map<TopicPartition, List<ConsumerRecord<K, V>>> fetchedRecords() {
+        // 遍历completedFetches，按照TopicPartition进行分类
         Map<TopicPartition, List<ConsumerRecord<K, V>>> drained = new HashMap<>();
+        // 一次最大的获取Record数量
         int recordsRemaining = maxPollRecords;
 
+        // 当还可以继续获取时
         while (recordsRemaining > 0) {
             if (nextInLineRecords == null || nextInLineRecords.isDrained()) {
                 CompletedFetch completedFetch = completedFetches.poll();
@@ -495,30 +552,40 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         return drained;
     }
 
+    // 将partitionRecords中的消息数据转换到drained中
     private List<ConsumerRecord<K, V>> drainRecords(PartitionRecords<K, V> partitionRecords, int maxRecords) {
+        // 查看当前消费者是否被分配了对应的分区
         if (!subscriptions.isAssigned(partitionRecords.partition)) {
+            // 当前消费者没有分配到该分区，这种情况一般是由于消息响应返回之前发生了Rebalance操作造成的
             // this can happen when a rebalance happened before fetched records are returned to the consumer's poll call
             log.debug("Not returning fetched records for partition {} since it is no longer assigned", partitionRecords.partition);
         } else {
             // note that the consumed position should always be available as long as the partition is still assigned
+            // 获取当前subscriptions中存储的对应分区下次要从Kafka服务端获取的消息的offset
             long position = subscriptions.position(partitionRecords.partition);
+            // 判断当前分区是否是可拉取的
             if (!subscriptions.isFetchable(partitionRecords.partition)) {
                 // this can happen when a partition is paused before fetched records are returned to the consumer's poll call
+                // 当前分区不可被拉取，这种情况一般是由于在消息响应返回之前分区被标记为暂停拉取而造成
                 log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", partitionRecords.partition);
             } else if (partitionRecords.fetchOffset == position) {
+                // 拉取的消息的offset与之前暂存的position是相等的，说明消息被正确拉取了，且拉的是最新的记录
+                // we are ensured to have at least one record since we already checked for emptiness
+                // 从partitionRecords中取出maxRecords条记录，maxRecords指定了一次最多可以获取的消息数量
                 List<ConsumerRecord<K, V>> partRecords = partitionRecords.drainRecords(maxRecords);
                 if (!partRecords.isEmpty()) {
+                    // 计算下一次的offset
                     long nextOffset = partRecords.get(partRecords.size() - 1).offset() + 1;
                     log.trace("Returning fetched records at offset {} for assigned partition {} and update " +
                             "position to {}", position, partitionRecords.partition, nextOffset);
 
                     subscriptions.position(partitionRecords.partition, nextOffset);
                 }
-
+                // 更新下次要从Kafka服务端获取的消息的offset
                 Long partitionLag = subscriptions.partitionLag(partitionRecords.partition);
                 if (partitionLag != null)
                     this.sensors.recordPartitionLag(partitionRecords.partition, partitionLag);
-
+                // 返回消息记录
                 return partRecords;
             } else {
                 // these records aren't next in line based on the last consumed position, ignore them
@@ -527,7 +594,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                         partitionRecords.partition, partitionRecords.fetchOffset, position);
             }
         }
-
+        // 发生了Rebalance操作，将partitionRecords中的消息数据直接丢弃
         partitionRecords.drain();
         return Collections.emptyList();
     }
@@ -544,20 +611,29 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             final boolean requireTimestamps,
             final Map<TopicPartition, Long> timestampsToSearch) {
         // Group the partitions by node.
+        // 构造字典
         final Map<Node, Map<TopicPartition, Long>> timestampsToSearchByNode = new HashMap<>();
         for (Map.Entry<TopicPartition, Long> entry: timestampsToSearch.entrySet()) {
             TopicPartition tp  = entry.getKey();
+            // 从元数据中获取对应分区的信息
             PartitionInfo info = metadata.fetch().partition(tp);
+            // 分区信息为null，说明元数据过期了
             if (info == null) {
                 metadata.add(tp.topic());
                 log.debug("Partition {} is unknown for fetching offset, wait for metadata refresh", tp);
+                // 元数据过期，stale：陈腐的; 不新鲜的; 走了味的;
                 return RequestFuture.staleMetadata();
+
+                // 分区leader为null
             } else if (info.leader() == null) {
                 log.debug("Leader for partition {} unavailable for fetching offset, wait for metadata refresh", tp);
                 return RequestFuture.leaderNotAvailable();
             } else {
+                // 得到分区的Leader节点
                 Node node = info.leader();
+
                 Map<TopicPartition, Long> topicData = timestampsToSearchByNode.get(node);
+
                 if (topicData == null) {
                     topicData = new HashMap<>();
                     timestampsToSearchByNode.put(node, topicData);
@@ -618,6 +694,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                     public void onSuccess(ClientResponse response, RequestFuture<Map<TopicPartition, OffsetData>> future) {
                         ListOffsetResponse lor = (ListOffsetResponse) response.responseBody();
                         log.trace("Received ListOffsetResponse {} from broker {}", lor, node);
+                        // 处理响应数据
                         handleListOffsetResponse(timestampsToSearch, lor, future);
                     }
                 });
@@ -628,6 +705,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * @param timestampsToSearch The mapping from partitions to target timestamps
      * @param listOffsetResponse The response from the server.
      * @param future The future to be completed by the response.
+     * 处理根据特定策略请求更新offset的响应
      */
     @SuppressWarnings("deprecation")
     private void handleListOffsetResponse(Map<TopicPartition, Long> timestampsToSearch,
@@ -636,9 +714,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         Map<TopicPartition, OffsetData> timestampOffsetMap = new HashMap<>();
         for (Map.Entry<TopicPartition, Long> entry : timestampsToSearch.entrySet()) {
             TopicPartition topicPartition = entry.getKey();
+
             ListOffsetResponse.PartitionData partitionData = listOffsetResponse.responseData().get(topicPartition);
+            // 获取错误码
             Errors error = Errors.forCode(partitionData.errorCode);
             if (error == Errors.NONE) {
+                // 无错误码
+                // 获取响应数据中相应分区的offset数据
                 if (partitionData.offsets != null) {
                     // Handle v0 response
                     long offset;
@@ -666,6 +748,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                         timestampOffsetMap.put(topicPartition, offsetData);
                     }
                 }
+
+                // 分区无Leader异常，未知的主题或分区异常
             } else if (error == Errors.UNSUPPORTED_FOR_MESSAGE_FORMAT) {
                 // The message format on the broker side is before 0.10.0, we simply put null in the response.
                 log.debug("Cannot search by timestamp for partition {} because the message format version " +
@@ -690,10 +774,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     private List<TopicPartition> fetchablePartitions() {
         Set<TopicPartition> exclude = new HashSet<>();
+        // 获取所有分配给当前消费者的可拉取的分区
         List<TopicPartition> fetchable = subscriptions.fetchablePartitions();
+        // 从fetchable移除nextInLineRecords记录中的分区，因为这些分区的响应还未被完全处理
         if (nextInLineRecords != null && !nextInLineRecords.isDrained()) {
             exclude.add(nextInLineRecords.partition);
         }
+        // 从fetchable移除存在于completedFetches中分区，因为这些分区的响应还未被完全处理
         for (CompletedFetch completedFetch : completedFetches) {
             exclude.add(completedFetch.partition);
         }
@@ -704,24 +791,43 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     /**
      * Create fetch requests for all nodes for which we have assigned partitions
      * that have no existing requests in flight.
+     *
+     * key是Node，value是发往对应Node的FetchRequest
      */
     private Map<Node, FetchRequest.Builder> createFetchRequests() {
         // create the fetch info
+        // 获取集群元数据
         Cluster cluster = metadata.fetch();
+        // 用于暂存需要发送的请求
         Map<Node, LinkedHashMap<TopicPartition, FetchRequest.PartitionData>> fetchable = new LinkedHashMap<>();
+        /**
+         * 遍历可拉取的分区，这里可拉取的条件如下：
+         * 1. 该分区是分配给当前消费者的；
+         * 2. 该分区未被标记为暂停状态，同时对应的TopicPartitionState的position不为null；
+         * 3. nextInLineRecords中没有来自此分区的消息；
+         * 4. completedFetches队列，诶呦来自此分区的CompletedFetch。
+         * 详见fetchablePartitions()方法
+         */
         for (TopicPartition partition : fetchablePartitions()) {
+            // 获取分区对应的Node信息
             Node node = cluster.leaderFor(partition);
+            // 如果Node信息为null，强制更新集群元数据
             if (node == null) {
                 metadata.requestUpdate();
             } else if (this.client.pendingRequestCount(node) == 0) {
                 // if there is a leader and no in-flight requests, issue a new fetch
+                // 如果没有正在发往该Node的请求
+                // 从fetchable中查询node对应的Map<TopicPartition, FetchRequest.PartitionData>数据
                 LinkedHashMap<TopicPartition, FetchRequest.PartitionData> fetch = fetchable.get(node);
+                // 如果查找的是null，就新建一个
                 if (fetch == null) {
                     fetch = new LinkedHashMap<>();
                     fetchable.put(node, fetch);
                 }
 
+                // 获取该分区当前的position，该position记录了下次要从Kafka服务端获取的消息的offset
                 long position = this.subscriptions.position(partition);
+                // 创建PartitionData对象，添加到对应的fetch字典中
                 fetch.put(partition, new FetchRequest.PartitionData(position, this.fetchSize));
                 log.trace("Added fetch request for partition {} at offset {} to node {}", partition, position, node);
             } else {
@@ -730,9 +836,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         }
 
         // create the fetches
+        // 创建存储FetchRequest的字典，键为Node，值为发往该Node的FetchRequest
         Map<Node, FetchRequest.Builder> requests = new HashMap<>();
+        // 遍历fetchable字典
         for (Map.Entry<Node, LinkedHashMap<TopicPartition, FetchRequest.PartitionData>> entry : fetchable.entrySet()) {
             Node node = entry.getKey();
+            // 创建FetchRequest
             FetchRequest.Builder fetch = new FetchRequest.Builder(this.maxWaitMs, this.minBytes, entry.getValue()).
                     setMaxBytes(this.maxBytes);
             requests.put(node, fetch);
@@ -742,10 +851,14 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * The callback for fetch completion
+     * parseCompletedFetch
      */
     private PartitionRecords<K, V> parseCompletedFetch(CompletedFetch completedFetch) {
+        // 获取分区
         TopicPartition tp = completedFetch.partition;
+        // 获取分区对应的数据
         FetchResponse.PartitionData partition = completedFetch.partitionData;
+        // 获取拉取消息的offset，这个offset会与前面发送拉取请求时记录的position进行比较，以判断拉取到的消息的偏移量是否正确
         long fetchOffset = completedFetch.fetchedOffset;
         int bytes = 0;
         int recordsCount = 0;
@@ -754,13 +867,16 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
         try {
             if (!subscriptions.isFetchable(tp)) {
+                // 分区是不可被拉取的，这种情况可能出现在由于处于Rebalance操作中或分区被标记为停止的情况下
                 // this can happen when a rebalance happened or a partition consumption paused
                 // while fetch is still in-flight
                 log.debug("Ignoring fetched records for partition {} since it is no longer fetchable", tp);
             } else if (error == Errors.NONE) {
+                // 没有错误，解析数据
                 // we are interested in this fetch only if the beginning offset matches the
                 // current consumed position
                 Long position = subscriptions.position(tp);
+                // 检查是否和返回的fetchOffset相同，如果不同表示得到的响应数据与当初希望拉取的数据的偏移量不同，直接返回null
                 if (position == null || position != fetchOffset) {
                     log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
                             "the expected offset {}", tp, fetchOffset, position);
@@ -769,21 +885,27 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
                 List<ConsumerRecord<K, V>> parsed = new ArrayList<>();
                 boolean skippedRecords = false;
+                // 遍历records
                 for (LogEntry logEntry : partition.records.deepEntries()) {
                     // Skip the messages earlier than current position.
+                    // 判断是否需要跳过比当前position还要早的消息
                     if (logEntry.offset() >= position) {
+                        // 解析消息并添加到parsed集合中
                         parsed.add(parseRecord(tp, logEntry));
+                        // 维护已读取的字节数记录
                         bytes += logEntry.sizeInBytes();
                     } else
+                        // 跳过消息，将skippedRecords置为true
                         skippedRecords = true;
                 }
-
+                // 消息数量
                 recordsCount = parsed.size();
 
                 log.trace("Adding fetched record for partition {} with offset {} to buffered record list", tp, position);
                 parsedRecords = new PartitionRecords<>(fetchOffset, tp, parsed);
 
                 if (parsed.isEmpty() && !skippedRecords && (partition.records.sizeInBytes() > 0)) {
+
                     if (completedFetch.responseVersion < 3) {
                         // Implement the pre KIP-74 behavior of throwing a RecordTooLargeException.
                         Map<TopicPartition, Long> recordTooLargePartitions = Collections.singletonMap(tp, fetchOffset);
@@ -807,22 +929,28 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 }
             } else if (error == Errors.NOT_LEADER_FOR_PARTITION) {
                 log.debug("Error in fetch for partition {}: {}", tp, error.exceptionName());
+                // 没有找到分区对应的Leader，或者没有找到分区对应的主题，此时本地的集群元数据可能过期了，需要更新
                 this.metadata.requestUpdate();
             } else if (error == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
                 log.warn("Received unknown topic or partition error in fetch for partition {}. The topic/partition " +
                         "may not exist or the user may not have Describe access to it", tp);
                 this.metadata.requestUpdate();
             } else if (error == Errors.OFFSET_OUT_OF_RANGE) {
+                // 拉取消息的偏移量超出了允许范围，判断获取到的消息的偏移量是否与请求时保存的position相同
                 if (fetchOffset != subscriptions.position(tp)) {
+                    // 不相同，说明拉取的消息不匹配，直接丢弃消息
                     log.debug("Discarding stale fetch response for partition {} since the fetched offset {}" +
                             "does not match the current offset {}", tp, fetchOffset, subscriptions.position(tp));
                 } else if (subscriptions.hasDefaultOffsetResetPolicy()) {
+                    // 相同，说明此时拉取的消息的偏移量确实超出范围了，如果SubscriptionState设置了偏移量重置策略，则标记需要重置偏移量
                     log.info("Fetch offset {} is out of range for partition {}, resetting offset", fetchOffset, tp);
                     subscriptions.needOffsetReset(tp);
                 } else {
+                    // 相同，说明此时拉取的消息的偏移量确实超出范围了，但没有设置偏移量重置策略，则抛出异常
                     throw new OffsetOutOfRangeException(Collections.singletonMap(tp, fetchOffset));
                 }
             } else if (error == Errors.TOPIC_AUTHORIZATION_FAILED) {
+                // 主题授权失败异常，抛出异常
                 log.warn("Not authorized to read from topic {}.", tp.topic());
                 throw new TopicAuthorizationException(Collections.singleton(tp.topic()));
             } else if (error == Errors.UNKNOWN) {
@@ -838,7 +966,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         // likely that partitions for the same topic can remain together (allowing for more efficient serialization).
         if (bytes > 0 || error != Errors.NONE)
             subscriptions.movePartitionToEnd(tp);
-
+        // 返回封装好的PartitionRecords对象
         return parsedRecords;
     }
 
@@ -846,8 +974,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * Parse the record entry, deserializing the key / value fields if necessary
      */
     private ConsumerRecord<K, V> parseRecord(TopicPartition partition, LogEntry logEntry) {
+        // 得到消息记录
         Record record = logEntry.record();
-
+        // 检查消息合法性
         if (this.checkCrcs) {
             try {
                 record.ensureValid();
@@ -858,16 +987,32 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         }
 
         try {
+            // 得到消息偏移量和时间戳
             long offset = logEntry.offset();
             long timestamp = record.timestamp();
             TimestampType timestampType = record.timestampType();
             ByteBuffer keyBytes = record.key();
+            // 反序列化得到消息的键
             byte[] keyByteArray = keyBytes == null ? null : Utils.toArray(keyBytes);
             K key = keyBytes == null ? null : this.keyDeserializer.deserialize(partition.topic(), keyByteArray);
             ByteBuffer valueBytes = record.value();
+            // 反序列化得到消息的值
             byte[] valueByteArray = valueBytes == null ? null : Utils.toArray(valueBytes);
             V value = valueBytes == null ? null : this.valueDeserializer.deserialize(partition.topic(), valueByteArray);
 
+            /**
+             * 将上述信息包装为一个ConsumerRecord对象，该对象包含了以下信息：
+             * 1. 主题
+             * 2. 分区
+             * 3. 偏移量
+             * 4. 时间戳
+             * 5. 时间戳类型
+             * 6. 消息的校验码
+             * 7. 消息的键长度
+             * 8. 消息的值长度
+             * 9. 消息的键
+             * 10. 消息的值
+             */
             return new ConsumerRecord<>(partition.topic(), partition.partition(), offset,
                                         timestamp, timestampType, record.checksum(),
                                         keyByteArray == null ? ConsumerRecord.NULL_SIZE : keyByteArray.length,
@@ -885,8 +1030,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     }
 
     private static class PartitionRecords<K, V> {
+        // records中第一条消息的offset
         private long fetchOffset;
+        // 消息对应的TopicPartition
         private TopicPartition partition;
+        // 消息集合
         private List<ConsumerRecord<K, V>> records;
         private int position = 0;
 
@@ -924,8 +1072,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     }
 
     private static class CompletedFetch {
+        // 分区
         private final TopicPartition partition;
+        // 拉取的offset
         private final long fetchedOffset;
+        // 拉取分区的数据
         private final FetchResponse.PartitionData partitionData;
         private final FetchResponseMetricAggregator metricAggregator;
         private final short responseVersion;

@@ -17,7 +17,9 @@ package org.apache.kafka.clients.consumer.internals;
  */
 public interface RequestFutureListener<T> {
 
+    //请求正常完成
     void onSuccess(T value);
 
+    // 请求出现异常
     void onFailure(RuntimeException e);
 }
