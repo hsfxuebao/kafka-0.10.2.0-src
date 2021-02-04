@@ -40,6 +40,7 @@ public class PlaintextChannelBuilder implements ChannelBuilder {
             PlaintextTransportLayer transportLayer = new PlaintextTransportLayer(key);
             Authenticator authenticator = new DefaultAuthenticator();
             authenticator.configure(transportLayer, this.principalBuilder, this.configs);
+            // 在此对PlaintextTransportLayer中的SocketChannel进行包装得到一个KafkaChannel对象
             return new KafkaChannel(id, transportLayer, authenticator, maxReceiveSize);
         } catch (Exception e) {
             log.warn("Failed to create channel due to ", e);

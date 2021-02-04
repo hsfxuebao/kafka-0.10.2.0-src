@@ -19,10 +19,15 @@ public class Node {
 
     private static final Node NO_NODE = new Node(-1, "", -1);
 
+    // broker节点id
     private final int id;
+    // broker节点id的字符串形式
     private final String idString;
+    // broker节点的地址
     private final String host;
+    // broker节点的端口
     private final int port;
+    // broker节点的机架
     private final String rack;
 
     public Node(int id, String host, int port) {

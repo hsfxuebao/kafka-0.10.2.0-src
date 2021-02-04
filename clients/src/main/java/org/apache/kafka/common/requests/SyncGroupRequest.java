@@ -29,9 +29,13 @@ import java.util.List;
 import java.util.Map;
 
 public class SyncGroupRequest extends AbstractRequest {
+    // Group ID，String类型
     public static final String GROUP_ID_KEY_NAME = "group_id";
+    // 消费者保存的年代信息，int类型
     public static final String GENERATION_ID_KEY_NAME = "generation_id";
+    // GroupCoordinator分配给消费者的ID，String类型
     public static final String MEMBER_ID_KEY_NAME = "member_id";
+    // 分区分区结果，byte数组类型
     public static final String MEMBER_ASSIGNMENT_KEY_NAME = "member_assignment";
     public static final String GROUP_ASSIGNMENT_KEY_NAME = "group_assignment";
 

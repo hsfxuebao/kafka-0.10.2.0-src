@@ -23,7 +23,9 @@ public class KafkaPrincipal implements Principal {
     public static final String USER_TYPE = "User";
     public final static KafkaPrincipal ANONYMOUS = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS");
 
+    // 记录客户端的身份类型
     private String principalType;
+    // 记录客户端的身份
     private String name;
 
     public KafkaPrincipal(String principalType, String name) {

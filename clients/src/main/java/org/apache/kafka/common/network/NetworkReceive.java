@@ -26,8 +26,11 @@ public class NetworkReceive implements Receive {
     public final static String UNKNOWN_SOURCE = "";
     public final static int UNLIMITED = -1;
 
+    // 消息来源Node节点的ID
     private final String source;
+    // 每次需要读取的消息的长度
     private final ByteBuffer size;
+    // 真正的消息数据
     private final int maxSize;
     private ByteBuffer buffer;
 
@@ -63,6 +66,7 @@ public class NetworkReceive implements Receive {
         return source;
     }
 
+    // 是否完成读取
     @Override
     public boolean complete() {
         //size 没有剩余空间（50） &&
@@ -76,6 +80,7 @@ public class NetworkReceive implements Receive {
     // Need a method to read from ReadableByteChannel because BlockingChannel requires read with timeout
     // See: http://stackoverflow.com/questions/2866557/timeout-for-socketchannel-doesnt-work
     // This can go away after we get rid of BlockingChannel
+    // 从channel中读取数据
     @Deprecated
     public long readFromReadableChannel(ReadableByteChannel channel) throws IOException {
         int read = 0;

@@ -24,7 +24,9 @@ import java.io.Serializable;
 public final class TopicPartition implements Serializable {
 
     private int hash = 0;
+    // 分区编号
     private final int partition;
+    // 主题名称
     private final String topic;
 
     public TopicPartition(String topic, int partition) {

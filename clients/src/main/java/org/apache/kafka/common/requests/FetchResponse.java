@@ -74,7 +74,9 @@ public class FetchResponse extends AbstractResponse {
 
     public static final class PartitionData {
         public final short errorCode;
+        // 高水位记录
         public final long highWatermark;
+        // 消息记录集缓冲区
         public final Records records;
 
         public PartitionData(short errorCode, long highWatermark, Records records) {

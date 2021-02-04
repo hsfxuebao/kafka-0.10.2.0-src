@@ -82,6 +82,10 @@ public class PlainSaslServer implements SaslServer {
         String username = tokens[1];
         String password = tokens[2];
 
+        /**
+         * 在使用SASL/PAIN方式进行身份认证时，authorizationID为空，会被赋值为username，
+         * 在后面权限控制时，会通过该字段确定其权限
+         */
         if (username.isEmpty()) {
             throw new SaslException("Authentication failed: username not specified");
         }
@@ -92,7 +96,9 @@ public class PlainSaslServer implements SaslServer {
             authorizationID = username;
 
         try {
+            // 读取配置文件中的信息，JAAS_USER_PREFIX为字符串"user_"
             String expectedPassword = JaasUtils.defaultServerJaasConfigOption(JAAS_USER_PREFIX + username, PlainLoginModule.class.getName());
+            // 检测密码是否正确
             if (!password.equals(expectedPassword)) {
                 throw new SaslException("Authentication failed: Invalid username or password");
             }

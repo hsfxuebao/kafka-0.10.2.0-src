@@ -32,21 +32,25 @@ public interface Login {
 
     /**
      * Configures this login instance.
+     * 配置Login对象
      */
     void configure(Map<String, ?> configs, Configuration jaasConfig, String loginContextName);
 
     /**
      * Performs login for each login module specified for the login context of this instance.
+     * 调用LoginModule的login()方法和commit()方法
      */
     LoginContext login() throws LoginException;
 
     /**
      * Returns the authenticated subject of this login context.
+     * 返回PlainLoginModule中配置好的Subject对象
      */
     Subject subject();
 
     /**
      * Returns the service name to be used for SASL.
+     * 返回服务名称，在DefaultLogin实现中始终返回"kafka"字符串
      */
     String serviceName();
 

@@ -48,16 +48,19 @@ public class SaslClientCallbackHandler implements AuthCallbackHandler {
         this.subject = subject;
     }
 
+    // 在创建PlainClient对象时，会调用该方法收集认证需要的信息，并保存到PlainClient中
     @Override
     public void handle(Callback[] callbacks) throws UnsupportedCallbackException {
         for (Callback callback : callbacks) {
             if (callback instanceof NameCallback) {
                 NameCallback nc = (NameCallback) callback;
+                // 获取用户名
                 if (!isKerberos && subject != null && !subject.getPublicCredentials(String.class).isEmpty()) {
                     nc.setName(subject.getPublicCredentials(String.class).iterator().next());
                 } else
                     nc.setName(nc.getDefaultName());
             } else if (callback instanceof PasswordCallback) {
+                // 获取密码
                 if (!isKerberos && subject != null && !subject.getPrivateCredentials(String.class).isEmpty()) {
                     char [] password = subject.getPrivateCredentials(String.class).iterator().next().toCharArray();
                     ((PasswordCallback) callback).setPassword(password);
@@ -80,6 +83,7 @@ public class SaslClientCallbackHandler implements AuthCallbackHandler {
                 String authId = ac.getAuthenticationID();
                 String authzId = ac.getAuthorizationID();
                 ac.setAuthorized(authId.equals(authzId));
+                // 认证通过，设置authorizedId
                 if (ac.isAuthorized())
                     ac.setAuthorizedID(authzId);
             } else {

@@ -33,7 +33,9 @@ public class KafkaChannel {
     private final TransportLayer transportLayer;
     private final Authenticator authenticator;
     private final int maxReceiveSize;
+    // 读缓存，底层使用ByteBuffer实现
     private NetworkReceive receive;
+    // 写缓存，底层使用ByteBuffer实现
     private Send send;
     // Track connection and mute state of channels to enable outstanding requests on channels to be
     // processed after the channel is disconnected.

@@ -90,6 +90,7 @@ public class ChannelBuilders {
                 throw new IllegalArgumentException("Unexpected securityProtocol " + securityProtocol);
         }
 
+        // 调用ChannelBuilder的configure()方法配置ChannelBuilder对象
         channelBuilder.configure(configs);
         return channelBuilder;
     }

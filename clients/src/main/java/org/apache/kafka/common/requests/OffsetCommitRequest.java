@@ -32,19 +32,27 @@ import java.util.Map;
  * This wrapper supports both v0 and v1 of OffsetCommitRequest.
  */
 public class OffsetCommitRequest extends AbstractRequest {
+    // Consumer Group的ID，String类型
     private static final String GROUP_ID_KEY_NAME = "group_id";
+    // 消费者保存的年代信息，int
     private static final String GENERATION_ID_KEY_NAME = "group_generation_id";
+    // GroupCoordinator分配给消费者的ID，String类型
     private static final String MEMBER_ID_KEY_NAME = "member_id";
     private static final String TOPICS_KEY_NAME = "topics";
+    // 此offset的最长保存时间，long类型
     private static final String RETENTION_TIME_KEY_NAME = "retention_time";
 
     // topic level field names
+    // topic名称，String类型
     private static final String TOPIC_KEY_NAME = "topic";
     private static final String PARTITIONS_KEY_NAME = "partitions";
 
     // partition level field names
+    // 分区编号，int类型
     private static final String PARTITION_KEY_NAME = "partition";
+    // 提交的消息offset，long类型
     private static final String COMMIT_OFFSET_KEY_NAME = "offset";
+    // 任何希望和offset一起保存的自定义数据，String类型
     private static final String METADATA_KEY_NAME = "metadata";
 
     @Deprecated

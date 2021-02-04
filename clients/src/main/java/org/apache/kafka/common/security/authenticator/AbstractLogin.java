@@ -41,8 +41,14 @@ import java.util.Map;
 public abstract class AbstractLogin implements Login {
     private static final Logger log = LoggerFactory.getLogger(AbstractLogin.class);
 
+
     private Configuration jaasConfig;
+    /**
+     * 指明了使用LoginContext的名称，Kafka客户端中该字段值为KafkaClient，
+     * 与kafka_client_jaas.conf配置文件第一行的"KafkaClient"匹配才能找到此LoginContext
+     */
     private String loginContextName;
+    // LogContext对象，与loginContextName指定的名称对应，其中可以包含多个LoginModule
     private LoginContext loginContext;
 
 
@@ -54,7 +60,10 @@ public abstract class AbstractLogin implements Login {
 
     @Override
     public LoginContext login() throws LoginException {
+
+        // 创建LoginContext对象
         loginContext = new LoginContext(loginContextName, null, new LoginCallbackHandler(), jaasConfig);
+        // 调用LoginContext的login()方法完成认证
         loginContext.login();
         log.info("Successfully logged in.");
         return loginContext;
@@ -62,6 +71,7 @@ public abstract class AbstractLogin implements Login {
 
     @Override
     public Subject subject() {
+        // 返回PlainLoginModule中设置好用户名和密码的Subject对象
         return loginContext.getSubject();
     }
 

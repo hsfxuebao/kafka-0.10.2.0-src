@@ -50,6 +50,7 @@ public class LoginManager {
                          Password jaasConfigValue) throws IOException, LoginException {
         this.cacheKey = jaasConfigValue != null ? jaasConfigValue : loginType;
         String loginContext = loginType.contextName();
+        // 根据是否使用Kerberos来选择Login对象
         login = hasKerberos ? new KerberosLogin() : new DefaultLogin();
         login.configure(configs, jaasConfig, loginContext);
         login.login();
@@ -80,6 +81,7 @@ public class LoginManager {
             if (loginType == LoginType.CLIENT && jaasConfigValue != null) {
                 loginManager = JAAS_CONF_INSTANCES.get(jaasConfigValue);
                 if (loginManager == null) {
+                    // 创建LoginManager对象，在该方法中会调用Login的login()方法
                     loginManager = new LoginManager(loginType, hasKerberos, configs, jaasConfig, jaasConfigValue);
                     JAAS_CONF_INSTANCES.put(jaasConfigValue, loginManager);
                 }
