@@ -1082,25 +1082,33 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @param timeout The maximum time to block in the underlying call to {@link ConsumerNetworkClient#poll(long)}.
      * @return The fetched records (may be empty)
      */
+    //  一次 poll 过程,包括检查新的数据、做一些必要的 commit 以及 offset  重置操作
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
+
+        // 步骤一. 获取 GroupCoordinator 并连接、加入 Group、sync Group, 期间 group 会进行 rebalance 并获取
         coordinator.poll(time.milliseconds());
 
         // fetch positions if we have partitions we're subscribed to that we
         // don't know the offset for
+        // 步骤二 更新要拉取 partition 的 offset（如果需要更新的话）
         if (!subscriptions.hasAllFetchPositions())
             updateFetchPositions(this.subscriptions.missingFetchPositions());
 
-        // if data is available already, return it immediately
+        // if data is available already, return it immediately、
+        // note: 3. 获取 fetcher 已经拉取到的数据
         Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty())
             return records;
+        // note: 说明上次 fetch 到是的数据已经全部拉取了,需要再次发送 fetch 请求,从 broker 拉取数据
 
         // send any new fetches (won't resend pending fetches)
+        // note: 4. 向订阅的所有 partition 发送 fetch 请求,会从多个 partition 拉取数据
         fetcher.sendFetches();
 
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);
 
+        //note: 5. 调用 poll 方法发送数据
         client.poll(pollTimeout, now, new PollCondition() {
             @Override
             public boolean shouldBlock() {
@@ -1112,6 +1120,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
         // after the long poll, we should check whether the group needs to rebalance
         // prior to returning data so that the group can stabilize faster
+        //note: 6. 如果 group 需要 rebalance, 直接返回空数据,这样更快地让 group 进行稳定状态
         if (coordinator.needRejoin())
             return Collections.emptyMap();
 
