@@ -168,6 +168,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
    */
   def startup() {
     try {
+      // 整个kafka服务端的功能 都是在这个里面
       info("starting")
 
       if(isShuttingDown.get)
@@ -211,6 +212,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         metadataCache = new MetadataCache(config.brokerId)
         credentialProvider = new CredentialProvider(config.saslEnabledMechanisms)
 
+        // NIO的服务端
         socketServer = new SocketServer(config, metrics, time, credentialProvider)
         socketServer.startup()
 
@@ -242,6 +244,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           kafkaController, zkUtils, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
           clusterId, time)
 
+        // todo 就是它处理的队列里面的请求
         requestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.requestChannel, apis, time,
           config.numIoThreads)
 

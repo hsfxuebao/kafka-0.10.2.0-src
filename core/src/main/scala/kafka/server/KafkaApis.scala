@@ -77,6 +77,11 @@ class KafkaApis(val requestChannel: RequestChannel,
       trace("Handling request:%s from connection %s;securityProtocol:%s,principal:%s".
         format(request.requestDesc(true), request.connectionId, request.securityProtocol, request.session.principal))
       ApiKeys.forId(request.requestId) match {
+        /**
+         * 因为我们使用的是场景驱动的方式去分析源码，从生产者发送请求过来
+         * 我们先看着的代码
+         */
+          // todo 处理生产者过来的请求
         case ApiKeys.PRODUCE => handleProducerRequest(request)
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.LIST_OFFSETS => handleOffsetRequest(request)
@@ -346,17 +351,26 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Handle a produce request
    */
   def handleProducerRequest(request: RequestChannel.Request) {
+    // 获取到生产者发送过来的请求信息
     val produceRequest = request.body.asInstanceOf[ProduceRequest]
     val numBytesAppended = request.header.sizeOf + produceRequest.sizeOf
 
+    // 按照分区的方式去遍历数据
+    // existingAndAuthorizedForDescribeTopics 对应的主题也存在 也有权限 正常情况
+    // nonExistingOrUnauthorizedForDescribeTopics 对应的主题不存在 没有权限 不正常情况
     val (existingAndAuthorizedForDescribeTopics, nonExistingOrUnauthorizedForDescribeTopics) = produceRequest.partitionRecords.asScala.partition {
+      // 对方发送过来的数据一些判断
+      // 主要就是针对权限等一类的事情进行判断
       case (topicPartition, _) => authorize(request.session, Describe, new Resource(auth.Topic, topicPartition.topic)) && metadataCache.contains(topicPartition.topic)
     }
 
+    // existingAndAuthorizedForDescribeTopics 再次处理数据
+    // 是否有权限
     val (authorizedRequestInfo, unauthorizedForWriteRequestInfo) = existingAndAuthorizedForDescribeTopics.partition {
       case (topicPartition, _) => authorize(request.session, Write, new Resource(auth.Topic, topicPartition.topic))
     }
 
+    // 经过前面代码的判断，最终我们需要处理的数据都是在authorizedRequestInfo 对象里面
     // the callback for sending a produce response
     def sendResponseCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
 
@@ -378,6 +392,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
 
       def produceResponseCallback(delayTimeMs: Int) {
+        // acks = 0 意味着生产者不关系数据处理的结果
+        // 所以不需要返回响应
         if (produceRequest.acks == 0) {
           // no operation needed if producer request.required.acks = 0; however, if there is any error in handling
           // the request, since no response is expected by the producer, the server will close socket server so that
@@ -396,7 +412,11 @@ class KafkaApis(val requestChannel: RequestChannel,
             requestChannel.noOperation(request.processor, request)
           }
         } else {
+          // 需要把数据处理完之后给客户端（生产者）返回响应
+
+          // 封装了一个请求体（响应消息）a
           val respBody = request.header.apiVersion match {
+              // 封装了响应
             case 0 => new ProduceResponse(mergedResponseStatus.asJava)
             case version@(1 | 2) => new ProduceResponse(mergedResponseStatus.asJava, delayTimeMs, version)
             // This case shouldn't happen unless a new version of ProducerRequest is added without
@@ -404,6 +424,9 @@ class KafkaApis(val requestChannel: RequestChannel,
             case version => throw new IllegalArgumentException(s"Version `$version` of ProduceRequest is not handled. Code must be updated.")
           }
 
+          // todo 返回响应（最重要的代码）
+          // 封装了Response的对象
+          // 这个对象就是服务端发送给客户端（生产者）的
           requestChannel.sendResponse(new RequestChannel.Response(request, respBody))
         }
       }
@@ -416,7 +439,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         request.header.clientId,
         numBytesAppended,
         produceResponseCallback)
-    }
+    }  // todo 暂时不看，等调用的时候在看
+
 
     if (authorizedRequestInfo.isEmpty)
       sendResponseCallback(Map.empty)
@@ -424,6 +448,11 @@ class KafkaApis(val requestChannel: RequestChannel,
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
+      /**
+       * 把接收到的数据追加到磁盘
+       * 大家目前只需要知道，我们的代码走到这
+       * 最终数据就会被写到磁盘上面
+        */
       replicaManager.appendRecords(
         produceRequest.timeout.toLong,
         produceRequest.acks,

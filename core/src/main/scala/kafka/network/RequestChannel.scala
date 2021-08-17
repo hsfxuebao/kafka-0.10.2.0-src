@@ -183,6 +183,7 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
   private var responseListeners: List[(Int) => Unit] = Nil
   private val requestQueue = new ArrayBlockingQueue[RequestChannel.Request](queueSize)
   private val responseQueues = new Array[BlockingQueue[RequestChannel.Response]](numProcessors)
+  // 默认情况下 有3个Processor线程，所以这个数组长度也是3
   for(i <- 0 until numProcessors)
     responseQueues(i) = new LinkedBlockingQueue[RequestChannel.Response]()
 
@@ -213,6 +214,10 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
 
   /** Send a response back to the socket server to be sent over the network */
   def sendResponse(response: RequestChannel.Response) {
+    /**
+     * 把响应存入队列里面
+     * 先从一个数组里面取出对应的Processor一个队列，然后把这个响应放入到这个队列里面
+     */
     responseQueues(response.processor).put(response)
     for(onResponse <- responseListeners)
       onResponse(response.processor)
@@ -242,6 +247,7 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
 
   /** Get a response for the given processor if there is one */
   def receiveResponse(processor: Int): RequestChannel.Response = {
+    // 获取对应线程的对应队列里面的响应对象
     val response = responseQueues(processor).poll()
     if (response != null)
       response.request.responseDequeueTimeMs = Time.SYSTEM.milliseconds

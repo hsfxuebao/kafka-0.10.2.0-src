@@ -254,6 +254,8 @@ public class Selector implements Selectable {
         // 此处会根据已知信息创建KafkaChannel对象，并将其attach到SelectionKey上
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);
         key.attach(channel);
+        // 服务端的代码 和客户端的网络部分的代码是复用的
+        // channels 里面维护了多个网络连接
         this.channels.put(id, channel);
     }
 

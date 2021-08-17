@@ -54,6 +54,7 @@ object Kafka extends Logging {
 
   def main(args: Array[String]): Unit = {
     try {
+      // 启动的时候会传递一些参数，这个地方就是去解析这些参数
       val serverProps = getPropsFromArgs(args)
       val kafkaServerStartable = KafkaServerStartable.fromProps(serverProps)
 
@@ -63,7 +64,7 @@ object Kafka extends Logging {
           kafkaServerStartable.shutdown
         }
       })
-
+     // 核心方法
       kafkaServerStartable.startup
       kafkaServerStartable.awaitShutdown
     }
