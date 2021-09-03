@@ -250,6 +250,7 @@ public class Selector implements Selectable {
      */
     public void register(String id, SocketChannel socketChannel) throws ClosedChannelException {
         // 注册OP_READ事件，得到键
+        // Processor线程觉可以读取客户端发送过来的请求连接
         SelectionKey key = socketChannel.register(nioSelector, SelectionKey.OP_READ);
         // 此处会根据已知信息创建KafkaChannel对象，并将其attach到SelectionKey上
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);
@@ -430,8 +431,10 @@ public class Selector implements Selectable {
                 if (channel.ready() && key.isReadable() && !hasStagedReceive(channel)) {
                     NetworkReceive networkReceive;
                     //接受服务端发送回来的响应（请求）
-                    //networkReceive 代表的就是一个服务端发送
-                    //回来的响应
+                    //networkReceive 代表的就是一个服务端发送回来的响应
+
+                    // 里面不断的读取数据 读取数据的代码我们之前就已经分析过
+                    // 里面还涉及粘包和拆包的问题
                     while ((networkReceive = channel.read()) != null)
                         addToStagedReceives(channel, networkReceive);
                 }
@@ -443,7 +446,11 @@ public class Selector implements Selectable {
                 if (channel.ready() && key.isWritable()) {
                     //获取到我们要发送的那个网络请求。
                     //是这句代码就是要往服务端发送数据了。
+
+                    // todo 服务端
+                    // 里面我们发现如果消息被发送出去了，然后移除OP_WRITE
                     Send send = channel.write();
+                    // 已经完成响应消息的发送
                     if (send != null) {
                         this.completedSends.add(send);
                         this.sensors.recordBytesSent(channel.id(), send.size());
@@ -708,6 +715,7 @@ public class Selector implements Selectable {
             stagedReceives.put(channel, new ArrayDeque<NetworkReceive>());
 
         Deque<NetworkReceive> deque = stagedReceives.get(channel);
+        // 往队列里面存放接收到的响应
         deque.add(receive);
     }
 
@@ -738,6 +746,8 @@ public class Selector implements Selectable {
 
     private void addToCompletedReceives(KafkaChannel channel, Deque<NetworkReceive> stagedDeque) {
         // 获取队首networkReceive并添加到completedReceives
+        // 对于客户端来说，获取到响应
+        // 对于服务端来说，这接收的是请求
         NetworkReceive networkReceive = stagedDeque.poll();
         this.completedReceives.add(networkReceive);
         // 调用bytesReceived的record()方法进行记录

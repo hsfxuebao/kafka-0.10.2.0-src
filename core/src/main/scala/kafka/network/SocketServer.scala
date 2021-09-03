@@ -513,6 +513,7 @@ private[kafka] class Processor(val id: Int,
             val channelId = curr.request.connectionId
             if (selector.channel(channelId) != null || selector.closingChannel(channelId) != null)
                 selector.unmute(channelId)
+
             // 如果我们想发送响应，走这个case
           case RequestChannel.SendAction =>
             // 发送请求
@@ -589,6 +590,7 @@ private[kafka] class Processor(val id: Int,
         throw new IllegalStateException(s"Send for ${send.destination} completed, but not in `inflightResponses`")
       }
       resp.request.updateRequestMetrics()
+      // 重新监听OP_READ事件
       selector.unmute(send.destination)
     }
   }
@@ -620,6 +622,7 @@ private[kafka] class Processor(val id: Int,
     // newConnections 连接队列
     while (!newConnections.isEmpty) {
 
+      // 不断获取newConnections中的socketChannel
       val channel = newConnections.poll()
       try {
         debug(s"Processor $id listening to new connection from ${channel.socket.getRemoteSocketAddress}")
@@ -629,6 +632,7 @@ private[kafka] class Processor(val id: Int,
         val remoteHost = channel.socket().getInetAddress.getHostAddress
         val remotePort = channel.socket().getPort
         val connectionId = ConnectionId(localHost, localPort, remoteHost, remotePort).toString
+
         selector.register(connectionId, channel)
       } catch {
         // We explicitly catch all non fatal exceptions and close the socket to avoid a socket leak. The other

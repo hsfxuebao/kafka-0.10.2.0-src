@@ -79,7 +79,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       ApiKeys.forId(request.requestId) match {
         /**
          * 因为我们使用的是场景驱动的方式去分析源码，从生产者发送请求过来
-         * 我们先看着的代码
+         * 我们先看这的代码
          */
           // todo 处理生产者过来的请求
         case ApiKeys.PRODUCE => handleProducerRequest(request)
@@ -365,7 +365,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     // existingAndAuthorizedForDescribeTopics 再次处理数据
-    // 是否有权限
+    // 看是否有写权限
     val (authorizedRequestInfo, unauthorizedForWriteRequestInfo) = existingAndAuthorizedForDescribeTopics.partition {
       case (topicPartition, _) => authorize(request.session, Write, new Resource(auth.Topic, topicPartition.topic))
     }
@@ -414,7 +414,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         } else {
           // 需要把数据处理完之后给客户端（生产者）返回响应
 
-          // 封装了一个请求体（响应消息）a
+          // 封装了一个请求体（响应消息）
           val respBody = request.header.apiVersion match {
               // 封装了响应
             case 0 => new ProduceResponse(mergedResponseStatus.asJava)
