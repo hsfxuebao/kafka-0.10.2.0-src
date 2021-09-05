@@ -184,6 +184,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * 发送拉取消息的请求
      */
     public int sendFetches() {
+        // 封装请求
         Map<Node, FetchRequest.Builder> fetchRequestMap = createFetchRequests();
         // 遍历createFetchRequest()方法得到的待发送请求字典，类型Map<Node, FetchRequest>
         for (Map.Entry<Node, FetchRequest.Builder> fetchEntry : fetchRequestMap.entrySet()) {
@@ -192,7 +193,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             final Node fetchTarget = fetchEntry.getKey();
 
             log.debug("Sending fetch for partitions {} to broker {}", request.fetchData().keySet(), fetchTarget);
-            // 使用ConsumerNetworkClient发送请求
+            // 使用ConsumerNetworkClient发送请求 FETCH请求
             client.send(fetchTarget, request)
                     // 并注册FetchResponse处理方法
                     .addListener(new RequestFutureListener<ClientResponse>() {

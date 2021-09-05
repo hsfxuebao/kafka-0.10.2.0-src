@@ -77,7 +77,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private final OffsetCommitCallback defaultOffsetCommitCallback;
     // 是否开启了自动提交offset（enable.auto.commit）
     private final boolean autoCommitEnabled;
-    // 自动提交offset的定时任务
+    // 每隔多久提交一次偏移量信息（消费偏移量）
     private final int autoCommitIntervalMs;
     // 拦截器集合
     private final ConsumerInterceptors<?, ?> interceptors;
@@ -325,7 +325,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         invokeCompletedOffsetCommitCallbacks();
 
         if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
-            // 确保GroupCoordinator已就绪，如果没有就绪会一直阻塞
+            // todo 确保GroupCoordinator已就绪，如果没有就绪会一直阻塞
+            // 计算出来那台服务器是coordinator服务器
             ensureCoordinatorReady();
             now = time.milliseconds();
         }
@@ -337,6 +338,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             if (subscriptions.hasPatternSubscription())
                 client.ensureFreshMetadata();
 
+            // todo 核心代码
             ensureActiveGroup();
             now = time.milliseconds();
         }
@@ -545,7 +547,13 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     public void commitOffsetsAsync(final Map<TopicPartition, OffsetAndMetadata> offsets, final OffsetCommitCallback callback) {
         invokeCompletedOffsetCommitCallbacks();
 
+        /** 其实提交偏移量信息就是提交coordinator
+         *
+         *  offset -> __conusmer_offset 默认有50个分区 -> 4  leader partition 在哪个主机 这个主机就是coordinator
+         *  同时，这个消费组偏移量信息也是提交到这个一台服务器（partition 这个leader partition）
+         */
         if (!coordinatorUnknown()) {
+            // todo
             doCommitOffsetsAsync(offsets, callback);
         } else {
             // we don't know the current coordinator, so try to find it and then send the commit
@@ -578,6 +586,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private void doCommitOffsetsAsync(final Map<TopicPartition, OffsetAndMetadata> offsets, final OffsetCommitCallback callback) {
         this.subscriptions.needRefreshCommits();
+        // 发送提交偏移量的请求
         RequestFuture<Void> future = sendOffsetCommitRequest(offsets);
         final OffsetCommitCallback cb = callback == null ? defaultOffsetCommitCallback : callback;
         future.addListener(new RequestFutureListener<Void>() {
@@ -655,6 +664,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 this.nextAutoCommitDeadline = now + retryBackoffMs;
             } else if (now >= nextAutoCommitDeadline) {
                 this.nextAutoCommitDeadline = now + autoCommitIntervalMs;
+                // todo 提交偏移量
                 doAutoCommitOffsetsAsync();
             }
         }
@@ -751,6 +761,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         if (generation == null)
             return RequestFuture.failure(new CommitFailedException());
 
+        // 封装请求
         OffsetCommitRequest.Builder builder =
                 new OffsetCommitRequest.Builder(this.groupId, offsetData).
                         setGenerationId(generation.generationId).
@@ -759,6 +770,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         log.trace("Sending OffsetCommit request with {} to coordinator {} for group {}", offsets, coordinator, groupId);
 
+        // 发送请求 OFFSET_COMMIT
         return client.send(coordinator, builder)
                 .compose(new OffsetCommitResponseHandler(offsets));
     }

@@ -166,7 +166,9 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
     assert(this.protocolType.orNull == member.protocolType)
     assert(supportsProtocols(member.protocols))
 
+    // 第一次进来的时候 leaderId肯定是null
     if (leaderId == null)
+      // 其实让哪个consumer成为leader consumer很简单，就是哪个先注册上来，谁就是leader consumer
       leaderId = member.memberId
     members.put(member.memberId, member)
   }

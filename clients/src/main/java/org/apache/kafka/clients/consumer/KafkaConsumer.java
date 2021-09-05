@@ -680,7 +680,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             String metricGrpPrefix = "consumer";
             // 创建KafkaChannel构建器
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
-            // 创建NetworkClient实例
+            /**
+             * 初始化一个核心的组件
+             * 这个组件我们熟悉得不能再熟悉了
+             * 创建NetworkClient实例
+             */
             NetworkClient netClient = new NetworkClient(
                     // 创建Selector实例
                     new Selector(config.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), metrics, time, metricGrpPrefix, channelBuilder),
@@ -704,7 +708,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             List<PartitionAssignor> assignors = config.getConfiguredInstances(
                     ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
                     PartitionAssignor.class);
-            // 根据配置创建ConsumerCoordinator
+            // todo 根据配置创建ConsumerCoordinator
             this.coordinator = new ConsumerCoordinator(this.client,
                     config.getString(ConsumerConfig.GROUP_ID_CONFIG),
                     config.getInt(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG),
@@ -721,7 +725,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG),
                     this.interceptors,
                     config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG));
-            // 根据配置创建Fetcher拉取器
+            // todo 根据配置创建Fetcher拉取器
             this.fetcher = new Fetcher<>(this.client,
                     config.getInt(ConsumerConfig.FETCH_MIN_BYTES_CONFIG),
                     config.getInt(ConsumerConfig.FETCH_MAX_BYTES_CONFIG),
@@ -1040,7 +1044,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             long start = time.milliseconds();
             long remaining = timeout;
             do {
-                // 调用pollOnce()方法拉取消息
+                // todo 调用pollOnce()方法拉取消息，里面就是消费者去消费数据
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
                 // 检查是否有消息返回
                 if (!records.isEmpty()) {
@@ -1124,6 +1128,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         if (coordinator.needRejoin())
             return Collections.emptyMap();
 
+        // 响应结果
         return fetcher.fetchedRecords();
     }
 

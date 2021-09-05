@@ -216,6 +216,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
         // 检测是否需要重新查找GroupCoordinator
         while (coordinatorUnknown()) {
+            // todo
             RequestFuture<Void> future = lookupCoordinator();
             // 发送GroupCoordinatorRequest请求，该方法会阻塞，直到接收到GroupCoordinatorResponse响应
             client.poll(future, remainingMs);
@@ -252,6 +253,7 @@ public abstract class AbstractCoordinator implements Closeable {
     protected synchronized RequestFuture<Void> lookupCoordinator() {
         if (findCoordinatorFuture == null) {
             // find a node to ask about the coordinator
+            // 任意找一台服务器
             Node node = this.client.leastLoadedNode();
             if (node == null) {
                 // TODO: If there are no brokers left, perhaps we should use the bootstrap set
@@ -262,6 +264,7 @@ public abstract class AbstractCoordinator implements Closeable {
             } else
                 // 需要查找GroupCoordinator
                 // 查找负载最低的Node节点，创建GroupCoordinatorRequest请求
+                // todo 发送请求
                 findCoordinatorFuture = sendGroupCoordinatorRequest(node);
         }
         return findCoordinatorFuture;
@@ -321,6 +324,7 @@ public abstract class AbstractCoordinator implements Closeable {
         // when sending heartbeats and does not necessarily require us to rejoin the group.
         ensureCoordinatorReady();
         startHeartbeatThreadIfNeeded();
+        // todo 发送注册请求的代码在这个里面
         joinGroupIfNeeded();
     }
 
@@ -349,10 +353,12 @@ public abstract class AbstractCoordinator implements Closeable {
             // still in progress.
             // 在Rebalance之前的准备工作，可能会提交Offset，调用使用者设置的Rebalance监听器
             if (needsJoinPrepare) {
+                // 进行注册之前准备
                 onJoinPrepare(generation.generationId, generation.memberId);
                 needsJoinPrepare = false;
             }
 
+            // todo
             RequestFuture<ByteBuffer> future = initiateJoinGroup();
             // 使用ConsumerNetworkClient发送JoinGroupRequest，会阻塞直到收到JoinGroupResponse或出现异常
             client.poll(future);
@@ -394,6 +400,7 @@ public abstract class AbstractCoordinator implements Closeable {
             disableHeartbeatThread();
 
             state = MemberState.REBALANCING;
+            // todo 发送一个注册的请求
             joinFuture = sendJoinGroupRequest();
             joinFuture.addListener(new RequestFutureListener<ByteBuffer>() {
                 @Override
@@ -444,7 +451,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 metadata()).setRebalanceTimeout(this.rebalanceTimeoutMs);
 
         log.debug("Sending JoinGroup ({}) to coordinator {}", requestBuilder, this.coordinator);
-        // 使用ConsumerNetworkClient将请求暂存入unsent，等待发送
+        // 使用ConsumerNetworkClient将请求暂存入unsent，等待发送  ApiKeys.JOIN_GROUP
         return client.send(coordinator, requestBuilder)
                 // 适配响应处理器
                 .compose(new JoinGroupResponseHandler());
@@ -472,9 +479,12 @@ public abstract class AbstractCoordinator implements Closeable {
                         AbstractCoordinator.this.generation = new Generation(joinResponse.generationId(),
                                 joinResponse.memberId(), joinResponse.groupProtocol());
                         AbstractCoordinator.this.rejoinNeeded = false;
-                        // 是否是Leader
+                        /**
+                         * 消费组所有成员都会发送joinGroup 最终只有一个consumer是leader consumer
+                         * 是否是Leader
+                         */
                         if (joinResponse.isLeader()) {
-                            // 如果是Leader，在该方法中会进行分区分配，并将分配结果反馈给服务端
+                            // 如果是Leader，在该方法中会进行分区分配，并将分配结果反馈给coordinator
                             onJoinLeader(joinResponse).chain(future);
                         } else {
                             // 如果是Follower，也会发送进行同步分区分配的请求
@@ -545,7 +555,7 @@ public abstract class AbstractCoordinator implements Closeable {
         // 检查GroupCoordinator是否就绪
         if (coordinatorUnknown())
             return RequestFuture.coordinatorNotAvailable();
-        // 将发送分区分配信息的请求暂存到unsent集合，
+        // 将发送分区分配信息的请求暂存到unsent集合， SYNC_GROUP
         return client.send(coordinator, requestBuilder)
                 .compose(new SyncGroupResponseHandler());
     }
@@ -606,6 +616,7 @@ public abstract class AbstractCoordinator implements Closeable {
         GroupCoordinatorRequest.Builder requestBuilder =
                 new GroupCoordinatorRequest.Builder(this.groupId);
         // 使用ConsumerNetworkClient发送请求，返回经过compose()适配的RequestFuture<Void>对象
+        // todo 发送ApiKeys.GROUP_COORDINATOR 的请求
         return client.send(node, requestBuilder)
                      .compose(new GroupCoordinatorResponseHandler());
     }
@@ -628,6 +639,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 synchronized (AbstractCoordinator.this) {
                     // 无异常，根据响应信息构建一个Node节点对象赋值给coordinator
                     AbstractCoordinator.this.coordinator = new Node(
+                            // 从响应里面解析出coordinator服务器信息
                             Integer.MAX_VALUE - groupCoordinatorResponse.node().id(),
                             groupCoordinatorResponse.node().host(),
                             groupCoordinatorResponse.node().port());
@@ -773,7 +785,7 @@ public abstract class AbstractCoordinator implements Closeable {
         // 创建心跳对象
         HeartbeatRequest.Builder requestBuilder =
                 new HeartbeatRequest.Builder(this.groupId, this.generation.generationId, this.generation.memberId);
-        // 使用ConsumerNetworkClient发送心跳，此时会将请求暂存到unsent集合，等待ConsumerNetworkClient的poll发送
+        // 使用ConsumerNetworkClient发送心跳，此时会将请求暂存到unsent集合，等待ConsumerNetworkClient的poll发送 HEARTBEAT
         return client.send(coordinator, requestBuilder)
                 // 同时使用HeartbeatCompletionHandler将RequestFuture<ClientResponse>适配成RequestFuture<Void>
                 .compose(new HeartbeatResponseHandler());
@@ -1014,7 +1026,7 @@ public abstract class AbstractCoordinator implements Closeable {
                         } else {
                             // 已到期，更新最近发送HeartbeatRequest请求的时间，即将lastHeartbeatSend更新为当前时间
                             heartbeat.sentHeartbeat(now);
-                            // 在返回的RequestFuture上添加RequestFutureListener监听器
+                            // 在返回的RequestFuture上添加RequestFutureListener监听器 发送心跳的请求
                             sendHeartbeatRequest().addListener(new RequestFutureListener<Void>() {
                                 @Override
                                 public void onSuccess(Void value) {

@@ -40,13 +40,18 @@ public class Consumer extends ShutdownableThread {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.IntegerDeserializer");
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
 
+        /**
+         * consumer 里面就是初始化了几个核心的组件
+         */
         consumer = new KafkaConsumer<>(props);
         this.topic = topic;
     }
 
     @Override
     public void doWork() {
+        // 订阅了主题
         consumer.subscribe(Collections.singletonList(this.topic));
+        // todo 里面有重要代码
         ConsumerRecords<Integer, String> records = consumer.poll(1000);
         for (ConsumerRecord<Integer, String> record : records) {
             System.out.println("Received message: (" + record.key() + ", " + record.value() + ") at offset " + record.offset());

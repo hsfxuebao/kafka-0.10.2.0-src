@@ -119,6 +119,7 @@ class GroupCoordinator(val brokerId: Int,
             responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID.code))
           } else {
             val group = groupManager.addGroup(new GroupMetadata(groupId))
+            // todo 核心代码
             doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
           }
 
@@ -191,6 +192,7 @@ class GroupCoordinator(val brokerId: Int,
           case Empty | Stable =>
             if (memberId == JoinGroupRequest.UNKNOWN_MEMBER_ID) {
               // if the member id is unknown, register the member to the group
+              // todo 第一次进来
               addMemberAndRebalance(rebalanceTimeoutMs, sessionTimeoutMs, clientId, clientHost, protocolType, protocols, group, responseCallback)
             } else {
               val member = group.get(memberId)
@@ -231,6 +233,7 @@ class GroupCoordinator(val brokerId: Int,
     } else {
       groupManager.getGroup(groupId) match {
         case None => responseCallback(Array.empty, Errors.UNKNOWN_MEMBER_ID.code)
+          // todo
         case Some(group) => doSyncGroup(group, generation, memberId, groupAssignment, responseCallback)
       }
     }
@@ -256,6 +259,7 @@ class GroupCoordinator(val brokerId: Int,
           case PreparingRebalance =>
             responseCallback(Array.empty, Errors.REBALANCE_IN_PROGRESS.code)
 
+            // 走到这
           case AwaitingSync =>
             group.get(memberId).awaitingSyncCallback = responseCallback
 
@@ -277,7 +281,9 @@ class GroupCoordinator(val brokerId: Int,
                       resetAndPropagateAssignmentError(group, error)
                       maybePrepareRebalance(group)
                     } else {
+                      // todo coordinator 下发分区方案
                       setAndPropagateAssignment(group, assignment)
+                      // 把状态切换成Stable
                       group.transitionTo(Stable)
                     }
                   }
@@ -384,6 +390,7 @@ class GroupCoordinator(val brokerId: Int,
                   responseCallback(Errors.ILLEGAL_GENERATION.code)
                 } else {
                   val member = group.get(memberId)
+                  // todo
                   completeAndScheduleNextHeartbeatExpiration(group, member)
                   responseCallback(Errors.NONE.code)
                 }
@@ -549,6 +556,7 @@ class GroupCoordinator(val brokerId: Int,
   private def setAndPropagateAssignment(group: GroupMetadata, assignment: Map[String, Array[Byte]]) {
     assert(group.is(AwaitingSync))
     group.allMemberMetadata.foreach(member => member.assignment = assignment(member.memberId))
+    // todo
     propagateAssignment(group, Errors.NONE)
   }
 
@@ -559,8 +567,11 @@ class GroupCoordinator(val brokerId: Int,
   }
 
   private def propagateAssignment(group: GroupMetadata, error: Errors) {
+    // 遍历所有的member
     for (member <- group.allMemberMetadata) {
       if (member.awaitingSyncCallback != null) {
+        // 调用回调函数 assignment 参数就是分配的分区消费方案
+        // 其实coordinator 就是通过调用这个member回调函数  完成分区方案的下发
         member.awaitingSyncCallback(member.assignment, error.code)
         member.awaitingSyncCallback = null
 
@@ -592,11 +603,17 @@ class GroupCoordinator(val brokerId: Int,
    */
   private def completeAndScheduleNextHeartbeatExpiration(group: GroupMetadata, member: MemberMetadata) {
     // complete current heartbeat expectation
+    // 更新对应的consumer 的上一次心跳时间
     member.latestHeartbeat = time.milliseconds()
     val memberKey = MemberKey(member.groupId, member.memberId)
     heartbeatPurgatory.checkAndComplete(memberKey)
 
     // reschedule the next heartbeat expiration deadline
+    /**
+     * 时间轮机制 往时间轮里面插入一个任务 这个任务就是用来检查心跳是否超时的
+     * 当前时间11：00：00     设置一个时间轮任务  11：00：30开始延时任务
+     * 去看最近30s 是否有心跳超时的
+     */
     val newHeartbeatDeadline = member.latestHeartbeat + member.sessionTimeoutMs
     val delayedHeartbeat = new DelayedHeartbeat(this, group, member, newHeartbeatDeadline, member.sessionTimeoutMs)
     heartbeatPurgatory.tryCompleteElseWatch(delayedHeartbeat, Seq(memberKey))
@@ -621,6 +638,7 @@ class GroupCoordinator(val brokerId: Int,
     val member = new MemberMetadata(memberId, group.groupId, clientId, clientHost, rebalanceTimeoutMs,
       sessionTimeoutMs, protocolType, protocols)
     member.awaitingJoinCallback = callback
+    // todo 添加自己的信息
     group.add(member)
     maybePrepareRebalance(group)
     member
