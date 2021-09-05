@@ -58,12 +58,15 @@ class LogManager(val logDirs: Array[File],
   val InitialTaskDelayMs = 30*1000
 
   private val logCreationOrDeletionLock = new Object
+  // 可以得出一个结论 一个分区（磁盘上的一个目录）对应一个log对象
   private val logs = new Pool[TopicPartition, Log]()
   private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
+  // todo 这个代码肯定被执行
   createAndValidateLogDirs(logDirs)
   private val dirLocks = lockLogDirs(logDirs)
   private val recoveryPointCheckpoints = logDirs.map(dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
+  // todo 这个代码肯定被执行
   loadLogs()
 
   // public, so we can access this from kafka.admin.DeleteTopicTest
@@ -82,11 +85,14 @@ class LogManager(val logDirs: Array[File],
    * </ol>
    */
   private def createAndValidateLogDirs(dirs: Seq[File]) {
+    // 判断是否有重复的目录
     if(dirs.map(_.getCanonicalPath).toSet.size < dirs.size)
       throw new KafkaException("Duplicate log directory found: " + logDirs.mkString(", "))
+    // 遍历所有配置的目录
     for(dir <- dirs) {
       if(!dir.exists) {
         info("Log directory '" + dir.getAbsolutePath + "' not found, creating it.")
+        // 如果代码第一次进来，就需要创建好所有的目录
         val created = dir.mkdirs()
         if(!created)
           throw new KafkaException("Failed to create data directory " + dir.getAbsolutePath)
@@ -118,7 +124,10 @@ class LogManager(val logDirs: Array[File],
     val threadPools = mutable.ArrayBuffer.empty[ExecutorService]
     val jobs = mutable.Map.empty[File, Seq[Future[_]]]
 
+    // 遍历所有的目录（配置的存储日志的目录）
     for (dir <- this.logDirs) {
+      // 为每个目录都创建一个线程池
+      // 后面肯定是启动线程池里面去加载Log
       val pool = Executors.newFixedThreadPool(ioThreads)
       threadPools.append(pool)
 
@@ -145,19 +154,23 @@ class LogManager(val logDirs: Array[File],
 
       val jobsForDir = for {
         dirContent <- Option(dir.listFiles).toList
+        // TODO logDir 表示一个分区的目录
         logDir <- dirContent if logDir.isDirectory
       } yield {
         CoreUtils.runnable {
           debug("Loading log '" + logDir.getName + "'")
 
+          // todo  获取分区信息
           val topicPartition = Log.parseTopicPartitionName(logDir)
           val config = topicConfigs.getOrElse(topicPartition.topic, defaultConfig)
           val logRecoveryPoint = recoveryPoints.getOrElse(topicPartition, 0L)
 
+          // todo 创建log对象
           val current = new Log(logDir, config, logRecoveryPoint, scheduler, time)
           if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
             this.logsToBeDeleted.add(current)
           } else {
+            // todo 把Log对象放入到logs里面
             val previous = this.logs.put(topicPartition, current)
             if (previous != null) {
               throw new IllegalArgumentException(
@@ -193,20 +206,30 @@ class LogManager(val logDirs: Array[File],
    *  Start the background threads to flush logs and do log cleanup
    */
   def startup() {
+    // 定时调度四个任务
     /* Schedule the cleanup task to delete old logs */
     if(scheduler != null) {
       info("Starting log cleanup with a period of %d ms.".format(retentionCheckMs))
+      // todo 定时检查文件 清理超时的文件
       scheduler.schedule("kafka-log-retention",
                          cleanupLogs,
                          delay = InitialTaskDelayMs,
                          period = retentionCheckMs,
                          TimeUnit.MILLISECONDS)
       info("Starting log flusher with a default period of %d ms.".format(flushCheckMs))
+      // todo 定时把内存里面的数据刷写到磁盘
       scheduler.schedule("kafka-log-flusher", 
                          flushDirtyLogs, 
                          delay = InitialTaskDelayMs, 
                          period = flushCheckMs, 
                          TimeUnit.MILLISECONDS)
+
+      /**
+       * 定时更新一个检查点的文件
+       * kafka服务有时候会涉及重启
+       * 重启之后需要恢复那些数据？
+       * 在这里会更新一个检查点文件-> 服务于kafka重启时恢复数据使用
+       */
       scheduler.schedule("kafka-recovery-point-checkpoint",
                          checkpointRecoveryPointOffsets,
                          delay = InitialTaskDelayMs,
@@ -469,8 +492,10 @@ class LogManager(val logDirs: Array[File],
     debug("Beginning log cleanup...")
     var total = 0
     val startMs = time.milliseconds
+    // 遍历所有的log
     for(log <- allLogs; if !log.config.compact) {
       debug("Garbage collecting '" + log.name + "'")
+      // 删除满足条件的文件
       total += log.deleteOldSegments()
     }
     debug("Log cleanup completed. " + total + " files deleted in " +
@@ -502,11 +527,16 @@ class LogManager(val logDirs: Array[File],
   private def flushDirtyLogs() = {
     debug("Checking for dirty logs to flush...")
 
+    // 遍历所有log
     for ((topicPartition, log) <- logs) {
       try {
         val timeSinceLastFlush = time.milliseconds - log.lastFlushTime
         debug("Checking if flush is needed on " + topicPartition.topic + " flush interval  " + log.config.flushMs +
               " last flushed " + log.lastFlushTime + " time since last flush: " + timeSinceLastFlush)
+        // 按照一定频率  频率的阈值是long的最大值
+        // 也就是kafka这不会主动把内存里面的数据写到磁盘
+        // 把内存里面的数据刷到磁盘这个操作是由  操作系统完成的
+        // 当然也可以去配置这个参数
         if(timeSinceLastFlush >= log.config.flushMs)
           log.flush
       } catch {

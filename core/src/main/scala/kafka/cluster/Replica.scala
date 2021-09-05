@@ -72,6 +72,7 @@ class Replica(val brokerId: Int,
     else if (logReadResult.info.fetchOffsetMetadata.messageOffset >= lastFetchLeaderLogEndOffset)
       _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
 
+    // 更新所有replica的LEO值
     logEndOffset = logReadResult.info.fetchOffsetMetadata
     lastFetchLeaderLogEndOffset = logReadResult.leaderLogEndOffset
     lastFetchTimeMs = logReadResult.fetchTimeMs

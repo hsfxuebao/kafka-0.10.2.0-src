@@ -109,6 +109,12 @@ class Log(@volatile var dir: File,
   @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
   /* the actual segments of the log */
+  /**
+   * juc 下数据结构 跳表实现的一个并发安全的Map集合
+   * key: 文件名（base offset）
+   * value : 就是一个segment
+   * 目的就是为了可以根据offset的大小快速定位
+   */
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
   locally {
     val startMs = time.milliseconds
@@ -350,6 +356,7 @@ class Log(@volatile var dir: File,
    * @return Information about the appended messages including the first and last offset.
    */
   def append(records: MemoryRecords, assignOffsets: Boolean = true): LogAppendInfo = {
+    // todo 步骤一 检验数据（Producer -> kafka）
     val appendInfo = analyzeAndValidateRecords(records)
 
     // if we have any valid messages, append them to the log
@@ -365,6 +372,7 @@ class Log(@volatile var dir: File,
 
         if (assignOffsets) {
           // assign offsets to the message set
+          // todo 步骤二  分配offset
           val offset = new LongRef(nextOffsetMetadata.messageOffset)
           appendInfo.firstOffset = offset.value
           val now = time.milliseconds
@@ -381,6 +389,7 @@ class Log(@volatile var dir: File,
           } catch {
             case e: IOException => throw new KafkaException("Error in validating messages while appending to log '%s'".format(name), e)
           }
+          // todo 步骤三 获取合法的数据
           validRecords = validateAndOffsetAssignResult.validatedRecords
           appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
           appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
@@ -416,12 +425,14 @@ class Log(@volatile var dir: File,
         }
 
         // maybe roll the log if this segment is full
+        // todo 步骤四 获取可用的segment
         val segment = maybeRoll(messagesSize = validRecords.sizeInBytes,
           maxTimestampInMessages = appendInfo.maxTimestamp,
           maxOffsetInMessages = appendInfo.lastOffset)
 
 
         // now append to the log
+        // todo 步骤五 把数据写到segment
         segment.append(firstOffset = appendInfo.firstOffset,
           largestOffset = appendInfo.lastOffset,
           largestTimestamp = appendInfo.maxTimestamp,
@@ -429,11 +440,20 @@ class Log(@volatile var dir: File,
           records = validRecords)
 
         // increment the log end offset
+        // todo 步骤六 更新LEO
+        // LEO = lastOffset + 1
         updateLogEndOffset(appendInfo.lastOffset + 1)
 
         trace("Appended message set to log %s with first offset: %d, next offset: %d, and messages: %s"
           .format(this.name, appendInfo.firstOffset, nextOffsetMetadata.messageOffset, validRecords))
-
+        // todo 步骤七  根据条件判断 把内存里面的数据写到磁盘
+        // 假设我们配置的10分钟刷写磁盘
+        // LogManager -> startup -> 操作系统里面的机制
+        /**
+         * flushInterval 默认是long型最大值，所以基本不会执行这个操作
+         * 从内存里面刷写数据到磁盘的操作就交给操作系统，由操作系统去管理
+         * 操作系统本身有一些机制，也会定期把数据写到磁盘中
+         */
         if (unflushedMessages >= config.flushInterval)
           flush()
 
@@ -553,7 +573,7 @@ class Log(@volatile var dir: File,
     val next = currentNextOffsetMetadata.messageOffset
     if(startOffset == next)
       return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY)
-
+    // 获取对应的segment对象
     var entry = segments.floorEntry(startOffset)
 
     // attempt to read beyond the log end offset is an error
@@ -581,6 +601,7 @@ class Log(@volatile var dir: File,
           entry.getValue.size
         }
       }
+      // todo 核心代码 通过segment去读取上面的数据
       val fetchInfo = entry.getValue.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
       if(fetchInfo == null) {
         entry = segments.higherEntry(entry.getKey)
@@ -694,12 +715,15 @@ class Log(@volatile var dir: File,
     */
   def deleteOldSegments(): Int = {
     if (!config.delete) return 0
+    //
     deleteRetenionMsBreachedSegments() + deleteRetentionSizeBreachedSegments()
   }
 
   private def deleteRetenionMsBreachedSegments() : Int = {
     if (config.retentionMs < 0) return 0
     val startMs = time.milliseconds
+    // 根据时间周期来删除文件  判断时间周期
+    // 如果超出周期，就把对应的文件删除
     deleteOldSegments(startMs - _.largestTimestamp > config.retentionMs)
   }
 
@@ -714,6 +738,7 @@ class Log(@volatile var dir: File,
         false
       }
     }
+    // 根据文件大小去删除文件
     deleteOldSegments(shouldDelete)
   }
 
@@ -850,7 +875,9 @@ class Log(@volatile var dir: File,
       return
     debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " +
           time.milliseconds + " unflushed = " + unflushedMessages)
+    // 遍历所有当前主机的所有的segment
     for(segment <- logSegments(this.recoveryPoint, offset))
+      // 调用flush方法
       segment.flush()
     lock synchronized {
       if(offset > this.recoveryPoint) {

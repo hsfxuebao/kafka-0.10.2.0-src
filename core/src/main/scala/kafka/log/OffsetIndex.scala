@@ -123,8 +123,15 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
       if (_entries == 0 || offset > _lastOffset) {
         debug("Adding index entry %d => %d to %s.".format(offset, position, file.getName))
+        // NIO offset 逻辑上的文职  0 1 2
         mmap.putInt((offset - baseOffset).toInt)
+        // 物理上的位置：写这条数据在磁盘的哪个位置
         mmap.putInt(position)
+
+        /**
+         * 结论：我们写索引的时候，会记录两个位置：一个是逻辑上位置，平时说的offset (偏移量)
+         * 还有一个物理位置 指的就是这个消息在磁盘的哪个位置
+         */
         _entries += 1
         _lastOffset = offset
         require(_entries * entrySize == mmap.position, entries + " entries but file position in index is " + mmap.position + ".")

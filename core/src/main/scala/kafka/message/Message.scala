@@ -108,8 +108,9 @@ object Message {
 /**
  * A message. The format of an N byte message is the following:
  *
- * 1. 4 byte CRC32 of the message
+ * 1. 4 byte CRC32 of the message 校验数据
  * 2. 1 byte "magic" identifier to allow format changes, value is 0 or 1
+ *     0- 绝对的offset 1-相对offset
  * 3. 1 byte "attributes" identifier to allow annotations on the message independent of the version
  *    bit 0 ~ 2 : Compression codec.
  *      0 : no compression

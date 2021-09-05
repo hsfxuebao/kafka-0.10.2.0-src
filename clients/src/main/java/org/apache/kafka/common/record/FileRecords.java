@@ -147,6 +147,8 @@ public class FileRecords extends AbstractRecords implements Closeable {
             end = sizeInBytes();
         else
             end = Math.min(this.start + position + size, sizeInBytes());
+        // 返回FileRecords对象  封装我们要读取的信息
+        // 拉取数据的时候，开始位置start  结束位置end
         return new FileRecords(file, channel, this.start + position, end, true);
     }
 
@@ -156,6 +158,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @return the number of bytes written to the underlying file
      */
     public int append(MemoryRecords records) throws IOException {
+        // todo 关键写数据代码
         int written = records.writeFullyTo(channel);
         size.getAndAdd(written);
         return written;
@@ -165,6 +168,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * Commit all written data to the physical disk
      */
     public void flush() throws IOException {
+        // 调用NIO的方法，强制把数据从内存里面刷写到磁盘
         channel.force(true);
     }
 

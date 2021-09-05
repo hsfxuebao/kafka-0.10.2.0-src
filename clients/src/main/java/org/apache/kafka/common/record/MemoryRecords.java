@@ -79,7 +79,12 @@ public class MemoryRecords extends AbstractRecords {
         buffer.mark();
         int written = 0;
         while (written < sizeInBytes())
+            /**
+             * 通过调用FileChannel去写数据
+             * javaNIO的只是
+             */
             written += channel.write(buffer);
+        // 恢复之前标记position位置
         buffer.reset();
         return written;
     }

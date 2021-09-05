@@ -41,6 +41,7 @@ import org.apache.kafka.common.record.MemoryRecords
 
 /**
  *  Abstract class for fetching data from multiple partitions from the same broker.
+ *  模板设计模式
  */
 abstract class AbstractFetcherThread(name: String,
                                      clientId: String,
@@ -90,6 +91,7 @@ abstract class AbstractFetcherThread(name: String,
   override def doWork() {
 
     val fetchRequest = inLock(partitionMapLock) {
+      // 构建请求
       val fetchRequest = buildFetchRequest(partitionStates.partitionStates.asScala.map { state =>
         state.topicPartition -> state.value
       })
@@ -100,6 +102,7 @@ abstract class AbstractFetcherThread(name: String,
       fetchRequest
     }
     if (!fetchRequest.isEmpty)
+      // 对请求进行处理
       processFetchRequest(fetchRequest)
   }
 
@@ -115,6 +118,8 @@ abstract class AbstractFetcherThread(name: String,
 
     try {
       trace("Issuing to broker %d of fetch request %s".format(sourceBroker.id, fetchRequest))
+      // 调用了fetch这个方法
+      // 这个方法里面主要是发送请求到leader partition所在的服务器
       responseData = fetch(fetchRequest)
     } catch {
       case t: Throwable =>
@@ -150,6 +155,7 @@ abstract class AbstractFetcherThread(name: String,
 
                     fetcherLagStats.getAndMaybePut(topic, partitionId).lag = Math.max(0L, partitionData.highWatermark - newOffset)
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
+                    // todo 处理响应数据
                     processPartitionData(topicPartition, currentPartitionFetchState.offset, partitionData)
 
                     val validBytes = records.validBytes

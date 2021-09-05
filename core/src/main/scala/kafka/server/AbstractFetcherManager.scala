@@ -73,15 +73,28 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, BrokerAndInitialOffset]) {
     mapLock synchronized {
+      /**
+       * 分组：partition+broker = key
+       * 按照key进行分组 然后去计算出来拉取的任务（线程）
+       * 如果leader partition在同一个broker上，只需要启动一个线程就可以
+       *
+       * 如果没有分组的话，是什么情况呢？
+       * 肯定一个follower 启动一个fetch任务，一个任务就是一个线程（100个follower就是100个线程）
+       * f1 f2 f3 f4 的leader partition都在hadoop1，这样的话 一个线程就可以干4个分区的活
+       * 大大减少线程的数量
+       */
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case(topicPartition, brokerAndInitialOffset) =>
         BrokerAndFetcherId(brokerAndInitialOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))}
+      // 遍历所有的fetch 任务
       for ((brokerAndFetcherId, partitionAndOffsets) <- partitionsPerFetcher) {
         var fetcherThread: AbstractFetcherThread = null
         fetcherThreadMap.get(brokerAndFetcherId) match {
           case Some(f) => fetcherThread = f
           case None =>
+            // 为每个任务创建一个线程
             fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
             fetcherThreadMap.put(brokerAndFetcherId, fetcherThread)
+            // 启动线程
             fetcherThread.start
         }
 

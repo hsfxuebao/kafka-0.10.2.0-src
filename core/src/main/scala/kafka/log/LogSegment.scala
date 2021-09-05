@@ -107,6 +107,7 @@ class LogSegment(val log: FileRecords,
         rollingBasedTimestamp = Some(largestTimestamp)
       // append the messages
       require(canConvertToRelativeOffset(largestOffset), "largest offset in message set can not be safely converted to relative offset.")
+      // todo 写数据到磁盘（内存）
       val appendedBytes = log.append(records)
       trace(s"Appended $appendedBytes to ${log.file()} at offset $firstOffset")
       // Update the in memory max timestamp and corresponding offset.
@@ -115,11 +116,18 @@ class LogSegment(val log: FileRecords,
         offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
       }
       // append an entry to the index (if needed)
+      // todo 写索引文件
+      // 条件判断，不是一条数据就写一条索引，而是达到一定条件才去写一条索引，所以这种索引叫稀疏索引
+      // 写了4096字节数据的时候才写一条索引
       if(bytesSinceLastIndexEntry > indexIntervalBytes) {
+        // 这比较重要
         index.append(firstOffset, physicalPosition)
+        // 这个我们一般用不到，暂时不关注
         timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestamp)
+        // 写完一条索引之后，又重新开始计算
         bytesSinceLastIndexEntry = 0
       }
+      // 当前消息大小累加
       bytesSinceLastIndexEntry += records.sizeInBytes
     }
   }
@@ -200,6 +208,7 @@ class LogSegment(val log: FileRecords,
         min(min(maxPosition, endPosition) - startPosition, adjustedMaxSize).toInt
     }
 
+    // todo log.read方法
     FetchDataInfo(offsetMetadata, log.read(startPosition, length),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }
@@ -325,6 +334,7 @@ class LogSegment(val log: FileRecords,
   @threadsafe
   def flush() {
     LogFlushStats.logFlushTimer.time {
+      // 主要关心log的flush
       log.flush()
       index.flush()
       timeIndex.flush()

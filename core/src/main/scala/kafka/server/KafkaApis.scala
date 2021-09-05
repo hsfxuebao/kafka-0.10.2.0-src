@@ -83,6 +83,7 @@ class KafkaApis(val requestChannel: RequestChannel,
          */
           // todo 处理生产者过来的请求
         case ApiKeys.PRODUCE => handleProducerRequest(request)
+          // todo 这是follower发送过来拉取数据请求（同步数据）
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.LIST_OFFSETS => handleOffsetRequest(request)
         case ApiKeys.METADATA => handleTopicMetadataRequest(request)
@@ -471,6 +472,7 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Handle a fetch request
    */
   def handleFetchRequest(request: RequestChannel.Request) {
+    // 获取到请求
     val fetchRequest = request.body.asInstanceOf[FetchRequest]
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
@@ -535,7 +537,9 @@ class KafkaApis(val requestChannel: RequestChannel,
       def fetchResponseCallback(delayTimeMs: Int) {
         trace(s"Sending fetch response to client $clientId of " +
           s"${convertedPartitionData.map { case (_, v) => v.records.sizeInBytes }.sum} bytes")
+        // 封装出来响应
         val fetchResponse = if (delayTimeMs > 0) new FetchResponse(versionId, fetchedPartitionData, delayTimeMs) else response
+        // todo
         requestChannel.sendResponse(new RequestChannel.Response(request, fetchResponse))
       }
 
@@ -552,6 +556,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
+    // 非正常请求
     if (authorizedRequestInfo.isEmpty)
       sendResponseCallback(Seq.empty)
     else {
