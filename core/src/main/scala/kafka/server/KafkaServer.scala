@@ -185,6 +185,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         kafkaScheduler.startup()
 
         /* setup zookeeper */
+        // todo zk初始化
         zkUtils = initZk()
 
         /* Get or create cluster_id */
@@ -225,7 +226,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         replicaManager.startup()
 
         /* start kafka controller */
+        // todo 尝试启动controller
         kafkaController = new KafkaController(config, zkUtils, brokerState, time, metrics, threadNamePrefix)
+        /**
+         * 假设broker0 broker1 broker2
+         * 启动完了以后肯定要从里面选举出来一个controller节点
+         * 作为主节点 管理整个kafka集群
+         */
         kafkaController.startup()
 
         adminManager = new AdminManager(config, metrics, metadataCache, zkUtils)
@@ -270,6 +277,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           else
             endpoint
         }
+        // todo 这就是每个broker完成注册的代码
         kafkaHealthcheck = new KafkaHealthcheck(config.brokerId, listeners, zkUtils, config.rack,
           config.interBrokerProtocolVersion)
         kafkaHealthcheck.startup()
@@ -306,6 +314,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   private def initZk(): ZkUtils = {
     info(s"Connecting to zookeeper on ${config.zkConnect}")
 
+    // 这些都是读取我们之前配置文件里面的参数
     val chrootIndex = config.zkConnect.indexOf("/")
     val chrootOption = {
       if (chrootIndex > 0) Some(config.zkConnect.substring(chrootIndex))
@@ -329,6 +338,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
       zkClientForChrootCreation.zkClient.close()
     }
 
+    // 初始化好了ZK的工具类，用来操作ZK集群
     val zkUtils = ZkUtils(config.zkConnect,
                           sessionTimeout = config.zkSessionTimeoutMs,
                           connectionTimeout = config.zkConnectionTimeoutMs,

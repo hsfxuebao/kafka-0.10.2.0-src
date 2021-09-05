@@ -385,6 +385,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
         else if (controller.config.interBrokerProtocolVersion >= KAFKA_0_9_0) 1
         else 0
 
+      // todo 构建一个请求
       val updateMetadataRequest = {
         val liveBrokers = if (version == 0) {
           // Version 0 of UpdateMetadataRequest only supports PLAINTEXT.
@@ -409,6 +410,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
       }
 
       updateMetadataRequestBrokerSet.foreach { broker =>
+        // todo 发送请求 ApiKeys.UPDATE_METADATA_KEY
         controller.sendRequest(broker, ApiKeys.UPDATE_METADATA_KEY, updateMetadataRequest, null)
       }
       updateMetadataRequestBrokerSet.clear()

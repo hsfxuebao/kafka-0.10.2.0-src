@@ -324,10 +324,26 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
       incrementControllerEpoch(zkUtils.zkClient)
 
       // before reading source of truth from zookeeper, register the listeners to get broker/topic callbacks
+      /**
+       * 这个函数最重要的一个内容  就是注册各种监听器
+       * 这些监听器是用来监听zk的目录变化
+       * 这些监听器是谁注册的？ 肯定时controller注册的
+       *
+       * 换句话说 controller被选举出来以后做的第一件事就是在zk上对各种目录设置了监听器
+       * controller就是通过监听这些目录的变化来管理kafka集群的
+       */
       registerReassignedPartitionsListener()
       registerIsrChangeNotificationListener()
       registerPreferredReplicaElectionListener()
+
+      /**
+       * 监听分区的变化
+       */
       partitionStateMachine.registerListeners()
+      /**
+       * 我们在这注册了一个监听器
+       * 通过这个监听器 感知到集群里面有新的broker注册进来
+       */
       replicaStateMachine.registerListeners()
 
       initializeControllerContext()
@@ -429,6 +445,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
     // broker via this update.
     // In cases of controlled shutdown leaders will not be elected when a new broker comes up. So at least in the
     // common controlled shutdown case, the metadata will reach the new brokers faster
+    // todo 发送一个元数据更新请求
     sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
     // the very first thing to do when a new broker comes up is send it the entire list of partitions that it is
     // supposed to host. Based on that the broker starts the high watermark threads for the input list of partitions
@@ -521,9 +538,11 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
    */
   def onNewPartitionCreation(newPartitions: Set[TopicAndPartition]) {
     info("New partition creation callback for %s".format(newPartitions.mkString(",")))
+    // 前面也是注册了各种重要的监听器
     partitionStateMachine.handleStateChanges(newPartitions, NewPartition)
     replicaStateMachine.handleStateChanges(controllerContext.replicasForPartition(newPartitions), NewReplica)
     partitionStateMachine.handleStateChanges(newPartitions, OnlinePartition, offlinePartitionSelector)
+    // todo 发送更新元数据的网络请求
     replicaStateMachine.handleStateChanges(controllerContext.replicasForPartition(newPartitions), OnlineReplica)
   }
 
@@ -676,8 +695,10 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
   def startup() = {
     inLock(controllerContext.controllerLock) {
       info("Controller starting up")
+      // 注册某个监听器 但是这个监听器目前对我们不重要，暂时先不看了
       registerSessionExpirationListener()
       isRunning = true
+      // broker 一启动 就是启动选举的方法
       controllerElector.startup
       info("Controller startup complete")
     }
@@ -697,6 +718,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
 
   def sendRequest(brokerId: Int, apiKey: ApiKeys, request: AbstractRequest.Builder[_ <: AbstractRequest],
                   callback: AbstractResponse => Unit = null) = {
+    // 通过网络  把请求发送出去
     controllerContext.controllerChannelManager.sendRequest(brokerId, apiKey, request, callback)
   }
 
@@ -1027,6 +1049,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
     try {
       brokerRequestBatch.newBatch()
       brokerRequestBatch.addUpdateMetadataRequestForBrokers(brokers, partitions)
+      // TODO 发送元数据更新的请求给所有的broker
       brokerRequestBatch.sendRequestsToBrokers(epoch)
     } catch {
       case e : IllegalStateException => {

@@ -469,6 +469,7 @@ object AdminUtils extends Logging with AdminUtilities {
     }
 
     // create the partition assignment
+    // 往目录里面写topic 的分区的分配方案
     writeTopicPartitionAssignment(zkUtils, topic, partitionReplicaAssignment, update)
   }
 

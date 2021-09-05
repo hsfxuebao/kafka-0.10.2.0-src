@@ -354,10 +354,17 @@ class ZkUtils(val zkClient: ZkClient,
                          jmxPort: Int,
                          rack: Option[String],
                          apiVersion: ApiVersion) {
+    /** 构建一个ZK目录
+     *  /brokers/ids/0
+     *  /brokers/ids/1
+     *  /brokers/ids/2
+     */
     val brokerIdPath = BrokerIdsPath + "/" + id
     // see method documentation for reason why we do this
     val version = if (apiVersion >= KAFKA_0_10_0_IV1) 4 else 2
+    // 封装了一些信息
     val json = Broker.toJson(version, id, host, port, advertisedEndpoints, jmxPort, rack)
+    // 直接创建一个目录（/brokers/ids/0）然后往这个目录里面写进去自己信息
     registerBrokerInZk(brokerIdPath, json)
 
     info("Registered broker %d at path %s with addresses: %s".format(id, brokerIdPath, advertisedEndpoints.mkString(",")))
@@ -365,10 +372,12 @@ class ZkUtils(val zkClient: ZkClient,
 
   private def registerBrokerInZk(brokerIdPath: String, brokerInfo: String) {
     try {
+      // 创建临时目录
       val zkCheckedEphemeral = new ZKCheckedEphemeral(brokerIdPath,
                                                       brokerInfo,
                                                       zkConnection.getZookeeper,
                                                       isSecure)
+      // 创建目录
       zkCheckedEphemeral.create()
     } catch {
       case _: ZkNodeExistsException =>

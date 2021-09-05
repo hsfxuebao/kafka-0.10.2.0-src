@@ -110,6 +110,7 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
       try {
         brokerRequestBatch.newBatch()
         replicas.foreach(r => handleStateChange(r, targetState, callbacks))
+        // todo 发送请求给其他所有的broker
         brokerRequestBatch.sendRequestsToBrokers(controller.epoch)
       }catch {
         case e: Throwable => error("Error while moving some replicas to %s state".format(targetState), e)
@@ -315,6 +316,7 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
   }
 
   private def deregisterBrokerChangeListener() = {
+    // 对/brokers/ids 目录设置了监听器
     zkUtils.zkClient.unsubscribeChildChanges(ZkUtils.BrokerIdsPath, brokerChangeListener)
   }
 
@@ -356,10 +358,15 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
         if (hasStarted.get) {
           ControllerStats.leaderElectionTimer.time {
             try {
+              // 获取到所有的broker
               val curBrokers = currentBrokerList.map(_.toInt).toSet.flatMap(zkUtils.getBrokerInfo)
+              // 获取到所有broker 的id号
               val curBrokerIds = curBrokers.map(_.id)
+              // 获取到所有的 live 的broker
               val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
+              // 新加入的broker
               val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
+              // 获取到宕机的broker
               val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
               val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
               controllerContext.liveBrokers = curBrokers
@@ -370,8 +377,11 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                 .format(newBrokerIdsSorted.mkString(","), deadBrokerIdsSorted.mkString(","), liveBrokerIdsSorted.mkString(",")))
               newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
               deadBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
+              // newBrokerIds 是新注册上来的broker
               if(newBrokerIds.nonEmpty)
+                // 新注册进来的broker 是如何处理的？
                 controller.onBrokerStartup(newBrokerIdsSorted)
+              // todo deadBrokerIds 是对宕机的broker进行处理
               if(deadBrokerIds.nonEmpty)
                 controller.onBrokerFailure(deadBrokerIdsSorted)
             } catch {

@@ -47,23 +47,37 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
 
   def startup {
     inLock(controllerContext.controllerLock) {
+      // todo 对zk 上面的/controller某个目录 注册监听器
       controllerContext.zkUtils.zkClient.subscribeDataChanges(electionPath, leaderChangeListener)
+      // todo  选举
       elect
     }
   }
 
+  // /controller 写数据（broker id号）
   def getControllerID(): Int = {
+    // 从/controller目录下面去获取数据
     controllerContext.zkUtils.readDataMaybeNull(electionPath)._1 match {
+        // 获取到了数据 返回一个id 这个id号就是某个broker id号  也就是这个broler id 就是controller
        case Some(controller) => KafkaController.parseControllerId(controller)
+         // 如果获取不到就返回-1
        case None => -1
     }
   }
 
   def elect: Boolean = {
     val timestamp = time.milliseconds.toString
+    /**
+     * 构建数据信息 比如version ,brokerId 时间戳等
+     */
     val electString = Json.encode(Map("version" -> 1, "brokerid" -> brokerId, "timestamp" -> timestamp))
-   
-   leaderId = getControllerID 
+
+    /***
+     * 去获取controller的id 号
+     * 我们使用场景驱动的方式 此时应该就是我们的第一台服务器
+     * 第一次启动 那么肯定没有controller的，所有在这获取不到（返回-1）
+     */
+    leaderId = getControllerID
     /* 
      * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition, 
      * it's possible that the controller has already been elected when we get here. This check will prevent the following 
@@ -71,17 +85,26 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
      */
     if(leaderId != -1) {
        debug("Broker %d has been elected as leader, so stopping the election process.".format(leaderId))
+       // 如果代码执行到这，说明之前已经完成选举了
        return amILeader
     }
 
     try {
+      // 创建一个临时目录（/controller）
+      // 然后往目录里面写上自己的信息
       val zkCheckedEphemeral = new ZKCheckedEphemeral(electionPath,
                                                       electString,
                                                       controllerContext.zkUtils.zkConnection.getZookeeper,
                                                       JaasUtils.isZkSecurityEnabled())
+      // 创建目录
       zkCheckedEphemeral.create()
       info(brokerId + " successfully elected as leader")
+      // 也就是当前服务器就是controller服务器了
       leaderId = brokerId
+      /** 如果创建完了 自己就成为leader 也就是controller
+       * 这是一个函数
+       * 当一个controller被选举出来以后，就会执行这个函数
+      */
       onBecomingLeader()
     } catch {
       case _: ZkNodeExistsException =>

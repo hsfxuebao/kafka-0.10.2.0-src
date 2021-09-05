@@ -162,8 +162,10 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
           case id if id < 0 => None
           case id => Some(id)
         }
+      // 把以前对应的数据结果清空
       aliveNodes.clear()
       aliveBrokers.clear()
+      // 获取到 发送过来请求的里面的元数据
       updateMetadataRequest.liveBrokers.asScala.foreach { broker =>
         // `aliveNodes` is a hot path for metadata requests for large clusters, so we use java.util.HashMap which
         // is a bit faster than scala.collection.mutable.HashMap. When we drop support for Scala 2.10, we could
@@ -174,6 +176,7 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
           endPoints += EndPoint(ep.host, ep.port, ep.listenerName, ep.securityProtocol)
           nodes.put(ep.listenerName, new Node(broker.id, ep.host, ep.port))
         }
+        // 用新的数据信息更新之前的broker的数据结构
         aliveBrokers(broker.id) = Broker(broker.id, endPoints, Option(broker.rack))
         aliveNodes(broker.id) = nodes.asScala
       }

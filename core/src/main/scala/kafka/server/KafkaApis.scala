@@ -89,6 +89,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.METADATA => handleTopicMetadataRequest(request)
         case ApiKeys.LEADER_AND_ISR => handleLeaderAndIsrRequest(request)
         case ApiKeys.STOP_REPLICA => handleStopReplicaRequest(request)
+          // todo 每一太broker 都会接受到元数据更新的请求
         case ApiKeys.UPDATE_METADATA_KEY => handleUpdateMetadataRequest(request)
         case ApiKeys.CONTROLLED_SHUTDOWN_KEY => handleControlledShutdownRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request)
@@ -198,10 +199,12 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleUpdateMetadataRequest(request: RequestChannel.Request) {
     val correlationId = request.header.correlationId
+    // 获取到请求
     val updateMetadataRequest = request.body.asInstanceOf[UpdateMetadataRequest]
 
     val updateMetadataResponse =
       if (authorize(request.session, ClusterAction, Resource.ClusterResource)) {
+        // todo 对接受的请求（元数据变化）进行处理
         val deletedPartitions = replicaManager.maybeUpdateMetadataCache(correlationId, updateMetadataRequest, metadataCache)
         if (deletedPartitions.nonEmpty)
           coordinator.handleDeletedPartitions(deletedPartitions)
@@ -211,11 +214,13 @@ class KafkaApis(val requestChannel: RequestChannel,
             adminManager.tryCompleteDelayedTopicOperations(topic)
           }
         }
+        // 封装返回去的响应
         new UpdateMetadataResponse(Errors.NONE.code)
       } else {
         new UpdateMetadataResponse(Errors.CLUSTER_AUTHORIZATION_FAILED.code)
       }
 
+    // 最终封装响应
     requestChannel.sendResponse(new Response(request, updateMetadataResponse))
   }
 

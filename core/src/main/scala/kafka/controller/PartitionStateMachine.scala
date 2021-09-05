@@ -365,6 +365,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
   }
 
   private def registerTopicChangeListener() = {
+    // 注册/brokers/topics 目录监听器
     zkUtils.zkClient.subscribeChildChanges(BrokerTopicsPath, topicChangeListener)
   }
 
@@ -420,13 +421,16 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             val deletedTopics = controllerContext.allTopics -- currentChildren
             controllerContext.allTopics = currentChildren
 
+            // 从ZK里面读取topic的分区的分配方案 这些信息就是元数据信息
             val addedPartitionReplicaAssignment = zkUtils.getReplicaAssignmentForTopics(newTopics.toSeq)
             controllerContext.partitionReplicaAssignment = controllerContext.partitionReplicaAssignment.filter(p =>
               !deletedTopics.contains(p._1.topic))
             controllerContext.partitionReplicaAssignment.++=(addedPartitionReplicaAssignment)
             info("New topics: [%s], deleted topics: [%s], new partition replica assignment [%s]".format(newTopics,
               deletedTopics, addedPartitionReplicaAssignment))
+            // 确实有新的topic注册上来 说明元数据发生了变化
             if (newTopics.nonEmpty)
+              // todo 肯定会在里面发送元数据变更的请求
               controller.onNewTopicCreation(newTopics, addedPartitionReplicaAssignment.keySet)
           } catch {
             case e: Throwable => error("Error while handling new topic", e)

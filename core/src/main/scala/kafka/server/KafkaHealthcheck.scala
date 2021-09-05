@@ -47,6 +47,7 @@ class KafkaHealthcheck(brokerId: Int,
   private[server] val sessionExpireListener = new SessionExpireListener
 
   def startup() {
+    // 注册了一个监听器
     zkUtils.zkClient.subscribeStateChanges(sessionExpireListener)
     register()
   }
@@ -68,6 +69,7 @@ class KafkaHealthcheck(brokerId: Int,
     // or we register an empty endpoint, which means that older clients will not be able to connect
     val plaintextEndpoint = updatedEndpoints.find(_.securityProtocol == SecurityProtocol.PLAINTEXT).getOrElse(
       new EndPoint(null, -1, null, null))
+    // 往ZK的某个目录写入进去一个注册信息（最重要的注册信息  就是自己的broker id）
     zkUtils.registerBrokerInZk(brokerId, plaintextEndpoint.host, plaintextEndpoint.port, updatedEndpoints, jmxPort, rack,
       interBrokerProtocolVersion)
   }
