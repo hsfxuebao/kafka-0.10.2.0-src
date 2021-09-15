@@ -252,7 +252,7 @@ public class NetworkClient implements KafkaClient {
     private boolean canSendRequest(String node) {
 
         /**
-         * connectionStates.isConnected(node):
+         * connectionStates.isReady(node):
          *  生产者：多个连接，缓存多个连接（跟我们的broker的节点数是一样的）
          *     判断缓存里面是否已经把这个连接给建立好了。
          * selector.isChannelReady(node)：
@@ -260,7 +260,7 @@ public class NetworkClient implements KafkaClient {
          *      selector -> 绑定了多个KafkaChannel(java socketChannel)
          *      一个kafkaChannel就代表一个连接。
          *
-         *  nFlightRequests.canSendMore(node)：
+         *  inFlightRequests.canSendMore(node)：
          *  每个往broker主机上面发送消息的连接，最多能容忍5个消息，发送出去了但是还没有接受到响应。
          *  发送数据的顺序。
          *  1,2,3,4,5
@@ -381,7 +381,6 @@ public class NetworkClient implements KafkaClient {
          * 即可。等我们分析完了kafka的网络以后，我们在回头看这儿的代码
          * 的时候，其实代码就比较简单了。
          */
-
         //步骤一：封装了一个要拉取元数据请求
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
@@ -404,9 +403,8 @@ public class NetworkClient implements KafkaClient {
         /**
          * 这个地方是我们在看生产者是如何获取元数据的时候，看的。
          * 其实Kafak获取元数据的流程跟我们发送消息的流程是一模一样。
-         * 获取元数据 -》 判断网络连接是否建立好 -》 建立网络连接
-         * -》 发送请求（获取元数据的请求） -》 服务端发送回来响应（带了集群的元数据信息）
-         *
+         * 获取元数据 -> 判断网络连接是否建立好 -> 建立网络连接
+         * -> 发送请求（获取元数据的请求） -> 服务端发送回来响应（带了集群的元数据信息）
          */
         handleCompletedReceives(responses, updatedNow);
         handleDisconnections(responses, updatedNow);
@@ -608,7 +606,7 @@ public class NetworkClient implements KafkaClient {
             log.trace("Completed receive from node {}, for key {}, received {}", req.destination, req.header.apiKey(), body);
             //TODO 如果是关于元数据信息的响应
             if (req.isInternalRequest && body instanceof MetadataResponse)
-                //解析完了以后就把封装成一个一个的cilentResponse
+                //解析完了以后就把封装成一个一个的clientResponse
                 //body 存储的是响应的内容
                 //req 发送出去的那个请求信息
                 metadataUpdater.handleCompletedMetadataResponse(req.header, now, (MetadataResponse) body);

@@ -56,7 +56,7 @@ public class DefaultPartitioner implements Partitioner {
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
         int numPartitions = partitions.size();
         if (keyBytes == null) {
-            //策略一： 如果发送消息的时候，没有指定key
+            //策略一： 如果发送消息的时候，没有指定key 轮询
             // 获取counter并自增，counter是个原子类
             int nextValue = nextValue(topic);
             // 获取可用分区
@@ -66,18 +66,18 @@ public class DefaultPartitioner implements Partitioner {
                 return availablePartitions.get(part).partition();
             } else {
                 // no partitions are available, give a non-available partition
-                // 没有可用分区，直接给一个可用分区
+                // 没有可用分区，直接给一个不可用分区
                 return Utils.toPositive(nextValue) % numPartitions;
             }
         } else {
-            //策略二：这个地方就是指定了key
-            // hash the keyBytes to choose a partition
-            //直接对key取一个hash值 % 分区的总数取模
-            //如果是同一个key，计算出来的分区肯定是同一个分区。
-            //如果我们想要让消息能发送到同一个分区上面，那么我们就
-            //必须指定key. 这一点非常重要
-            //希望大家一定一定要知道。
-            // murmur2是一种高效率低碰撞的Hash算法
+            /** 策略二：这个地方就是指定了key
+             *  hash the keyBytes to choose a partition
+             *  直接对key取一个hash值 % 分区的总数取模
+             *  如果是同一个key，计算出来的分区肯定是同一个分区。
+             *  如果我们想要让消息能发送到同一个分区上面，那么我们就
+             *  必须指定key. 这一点非常重要
+             *  murmur2是一种高效率低碰撞的Hash算法
+            */
             return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;
         }
     }
@@ -86,6 +86,7 @@ public class DefaultPartitioner implements Partitioner {
         AtomicInteger counter = topicCounterMap.get(topic);
         if (null == counter) {
             counter = new AtomicInteger(new Random().nextInt());
+            // 防止并发
             AtomicInteger currentCounter = topicCounterMap.putIfAbsent(topic, counter);
             if (currentCounter != null) {
                 counter = currentCounter;

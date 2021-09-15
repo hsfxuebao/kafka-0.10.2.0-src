@@ -86,6 +86,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           // todo 这是follower发送过来拉取数据请求（同步数据）
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.LIST_OFFSETS => handleOffsetRequest(request)
+          // todo 处理元数据的请求
         case ApiKeys.METADATA => handleTopicMetadataRequest(request)
         case ApiKeys.LEADER_AND_ISR => handleLeaderAndIsrRequest(request)
         case ApiKeys.STOP_REPLICA => handleStopReplicaRequest(request)

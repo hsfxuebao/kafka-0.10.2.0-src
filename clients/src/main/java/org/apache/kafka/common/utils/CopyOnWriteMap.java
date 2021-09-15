@@ -122,13 +122,15 @@ public class CopyOnWriteMap<K, V> implements ConcurrentMap<K, V> {
      *        这种设计方式，采用的是读写分离的设计思想。
      *        读操作和写操作 是相互不影响的。
      *        所以我们读数据的操作就是线程安全的。
-     *3）
+     * 3）
      *      最后把值赋给了map，map是用volatile关键字修饰的。
      *      说明这个map是具有可见性的，这样的话，如果get数据的时候，这儿的值发生了变化，也是能感知到的。
      */
     @Override
     public synchronized V put(K k, V v) {
+        // 新的内存空间
         Map<K, V> copy = new HashMap<K, V>(this.map);
+        // 插入操作
         V prev = copy.put(k, v);
         this.map = Collections.unmodifiableMap(copy);
         return prev;

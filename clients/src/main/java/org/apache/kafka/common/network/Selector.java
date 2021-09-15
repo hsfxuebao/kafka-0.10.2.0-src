@@ -75,6 +75,11 @@ import org.slf4j.LoggerFactory;
  *
  * This class is not thread safe!
  */
+
+/***
+ * todo 这个Selector是kafka自己封装出来
+ * 基于java nio 里面的selector去封装的
+ */
 public class Selector implements Selectable {
 
     public static final long NO_IDLE_TIMEOUT_MS = -1;

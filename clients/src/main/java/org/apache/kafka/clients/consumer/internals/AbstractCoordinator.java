@@ -669,7 +669,6 @@ public abstract class AbstractCoordinator implements Closeable {
      * Check if we know who the coordinator is and we have an active connection
      * @return true if the coordinator is unknown
      */
-     */
     public boolean coordinatorUnknown() {
         // coordinator是否为null
         return coordinator() == null;

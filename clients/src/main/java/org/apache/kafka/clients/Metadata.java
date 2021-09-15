@@ -44,10 +44,12 @@ import java.util.Set;
  * manage topics while producers rely on topic expiry to limit the refresh set.
  */
 
-// 这个类被 client 线程和后台 sender 所共享,它只保存了所有 topic 的部分数据,当我们请求一个它上面没有的 topic meta 时,
-// 它会通过发送 metadata update 来更新 meta 信息,
-// 如果 topic meta 过期策略是允许的,那么任何 topic 过期的话都会被从集合中移除,
-// 但是 consumer 是不允许 topic 过期的因为它明确地知道它需要管理哪些 topic
+/**
+ * 这个类被 client 线程和后台 sender 所共享,它只保存了所有 topic 的部分数据,当我们请求一个它上面没有的 topic meta 时,
+ * 它会通过发送 metadata update 来更新 meta 信息,
+ * 如果 topic meta 过期策略是允许的,那么任何 topic 过期的话都会被从集合中移除,
+ * 但是 consumer 是不允许 topic 过期的因为它明确地知道它需要管理哪些 topic
+ */
 public final class Metadata {
 
     private static final Logger log = LoggerFactory.getLogger(Metadata.class);
@@ -57,7 +59,7 @@ public final class Metadata {
     //两个更新元数据的请求的最小的时间间隔，默认值是100ms
     //目的就是减少网络的压力
     private final long refreshBackoffMs;
-    // //多久自动更新一次元数据，默认值是5分钟更新一次。
+    // 多久自动更新一次元数据，默认值是5分钟更新一次。
     private final long metadataExpireMs;
     // 集群元数据版本号，元数据更新成功一次，版本号就自增1
     private int version;
@@ -249,7 +251,9 @@ public final class Metadata {
         this.needUpdate = false;
         this.lastRefreshMs = now;
         this.lastSuccessfulRefreshMs = now;
-        // 元数据版本 +1
+        /**
+         * 更新元数据版本 +1
+          */
         this.version += 1;
         // 默认是true
         if (topicExpiryEnabled) {
@@ -300,8 +304,7 @@ public final class Metadata {
                 log.info("Cluster ID: {}", cluster.clusterResource().clusterId());
             clusterResourceListeners.onUpdate(cluster.clusterResource());
         }
-        //大家发现这儿会有一个notifyAll，这个最重要的一个作用是不是就是唤醒，我们上一讲
-        //看到那个wait的线程。
+        //大家发现这儿会有一个notifyAll，最重要的一个作用就是唤醒那个wait的线程。
         notifyAll();
         log.debug("Updated cluster metadata version {} to {}", this.version, this.cluster);
     }

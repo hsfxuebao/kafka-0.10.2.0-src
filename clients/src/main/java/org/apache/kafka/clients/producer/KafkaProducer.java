@@ -362,7 +362,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              *connections.max.idle.ms: 默认值是9分钟，一个网络连接最多空闲多久，超过这个空闲时间，就关闭这个网络连接。
              *
              * max.in.flight.requests.per.connection：默认是5，producer -》 broker 。
-             *  发送数据的时候，其实是有多个网络连接。每个网络连接可以忍受 producer端发送给broker 消息然后消息没有响应的个数。
+             *  发送数据的时候，其实是有多个网络连接。每个网络连接可以忍受 producer端发送给broker消息 然后消息没有响应的个数。
              *  因为kafka有重试机制，所以有可能会造成数据乱序，如果想要保证有序，这个值要把设置为1.
              *
              *  send.buffer.bytes：socket发送数据的缓冲区的大小，默认值是128K
@@ -387,7 +387,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              *      producer发送数据到broker后，就完了，没有返回值，不管写成功还是写失败都不管了。
              *   1：
              *      producer发送数据到broker后，数据成功写入leader partition以后返回响应。
-             *      数据 -》 broker（leader partition）
+             *      数据 -> broker（leader partition）
              *   -1：
              *       producer发送数据到broker后，数据要写入到leader partition里面，并且数据同步到所有的
              *       follower partition里面以后，才返回响应。
@@ -405,9 +405,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     Time.SYSTEM,
                     this.requestTimeoutMs);
             String ioThreadName = "kafka-producer-network-thread" + (clientId.length() > 0 ? " | " + clientId : "");
-            //创建了一个线程，然后里面传进去了一个sender对象。
-            //把业务的代码和关于线程的代码给隔离开来。
-            //关于线程的这种代码设计的方式，其实也值得大家积累的。
+            /**
+             * 创建了一个线程，然后里面传进去了一个sender对象。
+             * 把业务的代码和关于线程的代码给隔离开来。
+             * 关于线程的这种代码设计的方式，其实也值得大家积累的。
+            */
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
             // 启动sender线程
             this.ioThread.start();
@@ -662,7 +664,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         metadata.add(topic);
 
         //我们使用的是场景驱动的方式，然后我们目前代码执行到的producer端初始化完成。
-        //我们知道这个cluster里面其实没有元数据，只是有我们写代码的时候设置address
+        //我们知道这个cluster里面其实没有元数据，只有我们写代码的时候设置address
         Cluster cluster = metadata.fetch();
 
         //根据当前的topic从这个集群的cluster元数据信息里面查看分区的信息。
@@ -699,7 +701,6 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              * TODO 这个步骤重要
              * 我们发现这儿去唤醒sender线程。
              * 其实是因为，拉取元数据这个操作是有sender线程去完成的。
-             * 这个地方把线程给唤醒了以后
              * 我们知道sender线程肯定就开始进行干活了！！ 至于怎么我们后面在继续分析。
              *
              * 这儿我告诉大家，java的线程的知识，并发的知识，大家一定要掌握。
@@ -737,6 +738,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     String.format("Invalid partition given with record: %d is not in the range [0...%d).", partition, partitionsCount));
         }
 
+        // 返回一个对象
         return new ClusterAndWaitTime(cluster, elapsed);
     }
 
@@ -924,12 +926,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * calls configured partitioner class to compute the partition.
      */
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
-        //如果你的这个消息已经分配了分区号，那直接就用这个分区号就可以了
-        //但是正常情况下，消息是没有分区号的。
+        // 如果你的这个消息已经分配了分区号，那直接就用这个分区号就可以了
+        // 但是正常情况下，消息是没有分区号的。
         Integer partition = record.partition();
         return partition != null ?
                 partition :
-               //使用分区器进行选择合适的分区
+               // 使用分区器进行选择合适的分区
                 partitioner.partition(
                         record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
     }

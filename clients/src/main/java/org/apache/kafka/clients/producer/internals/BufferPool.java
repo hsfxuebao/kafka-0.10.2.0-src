@@ -43,8 +43,9 @@ import org.apache.kafka.common.utils.Time;
  */
 public final class BufferPool {
 
-    // 整个Pool的大小
+    // 整个Pool的大小 默认32M
     private final long totalMemory;
+    // 代表的是一个批次的大小，默认是16K
     private final int poolableSize;
     // 控制并发访问
     private final ReentrantLock lock;
@@ -111,7 +112,7 @@ public final class BufferPool {
             //跟我们连接池是一个道理。
 
             //我们场景驱动的方式，第一次进来
-            //内存池里面里面是没有内存的，所以这儿是获取不到内存。
+            //内存池里面是没有内存的，所以这儿是获取不到内存。
             if (size == poolableSize && !this.free.isEmpty())
                 return this.free.pollFirst();
 
@@ -146,7 +147,6 @@ public final class BufferPool {
                 // enough memory to allocate one
                 /**
                  * 总的分配的思路，可能一下子分配不了这么大的内存，但是可以先有点分配一点。
-                 *
                  */
                 //如果分配的内存的大小 还是没有要申请的内存大小大。
                 //内存池就会一直分配的内存，一点一点的去分配。

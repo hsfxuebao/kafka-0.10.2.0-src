@@ -165,32 +165,26 @@ public class Sender implements Runnable {
      */
     void run(long now) {
 
-        //获取元数据
-        //因为我们是根据场景驱动的方式，目前是我们第一次代码进来，
-        //目前还没有获取到元数据
-        //所以这个cluster里面是没有元数据
-        //如果这儿没有元数据的话，这个方法里面接下来的代码就不用看了
-        //是以为接下来的这些代码依赖这个元数据。
-        //TODO 我们直接看这个方法的最后一行代码
-        //就是这行代码去拉取的元数据。
-
-
+        /** 获取元数据
+         *    因为我们是根据场景驱动的方式，目前是我们第一次代码进来，
+         *    目前还没有获取到元数据
+         *    所以这个cluster里面是没有元数据
+         *    如果这儿没有元数据的话，这个方法里面接下来的代码就不用看了
+         *    是因为接下来的这些代码依赖这个元数据。
+         *    TODO 我们直接看这个方法的最后一行代码
+         *    就是这行代码去拉取的元数据。
+         */
         /**
          * 我们用场景驱动的方式，现在我们的代码是第二次进来
          * 第二次进来的时候，已经有元数据了，所以cluster这儿是有元数据。
-         *
          * 步骤一：
          *      获取元数据
-         *
-         *
          */
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
         /**
          * 步骤二：
-         *      首先是判断哪些partition有消息可以发送，获取到这个partition的leader partition
-         *      对应的broker主机。
-         *
+         *      首先是判断哪些partition有消息可以发送，获取到这个partition的leader partition对应的broker主机。
          *      哪些broker上面需要我们去发送消息？
          */
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
@@ -243,8 +237,8 @@ public class Sender implements Runnable {
          * 0:{p0,p1}
          * 1:{p2}
          * 2:{p3}
-         *
          */
+        // 如果网络没有建立好，这的代码是不执行的
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
@@ -306,7 +300,7 @@ public class Sender implements Runnable {
          * 真正执行网络操作的都是这个NetWordClient这个组件
          * 包括：发送请求，接受响应（处理响应）
          */
-        //我们猜这儿可能就是去建立连接。
+        // 我们猜这儿可能就是去建立连接。
         this.client.poll(pollTimeout, now);
     }
 

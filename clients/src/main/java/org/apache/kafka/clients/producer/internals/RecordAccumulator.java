@@ -195,7 +195,6 @@ public final class RecordAccumulator {
             // 同步操作，以Deque为锁
             /**
              * 假设我们现在有线程一，线程二，线程三
-             *
              */
             synchronized (dq) {
                 // 检查生产者是否已经关闭了
@@ -206,7 +205,7 @@ public final class RecordAccumulator {
                  * 步骤二：
                  *      尝试往队列里面的批次里添加数据
                  *
-                 *      一开始添加数据肯定是失败的，我们目前只是以后了队列
+                 *      一开始添加数据肯定是失败的，我们目前只是有了队列
                  *      数据是需要存储在批次对象里面（这个批次对象是需要分配内存的）
                  *      我们目前还没有分配内存，所以如果按场景驱动的方式，
                  *      代码第一次运行到这儿其实是不成功的。
@@ -227,14 +226,13 @@ public final class RecordAccumulator {
              * 如果我们生产者发送数的时候，如果我们的消息的大小都是超过16K，
              * 说明其实就是一条消息就是一个批次，那也就是说消息是一条一条被发送出去的。
              * 那如果是这样的话，批次这个概念的设计就没有意义了
-             * 所以大家一定要根据自定公司的数据大小的情况去设置批次的大小。
+             * 所以大家一定要根据自己公司的数据大小的情况去设置批次的大小。
              */
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
             /**
              * 步骤四：
              *  根据批次的大小去分配内存
-             *
              *
              *  线程一，线程二，线程三，执行到这儿都会申请内存
              *  假设每个线程 都申请了 16k的内存。
@@ -272,7 +270,6 @@ public final class RecordAccumulator {
                  * 步骤六：
                  *  根据内存大小封装批次
                  *
-                 *
                  *  线程一到这儿 会根据内存封装出来一个批次。
                  */
                 MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(buffer, compression, TimestampType.CREATE_TIME, this.batchSize);
@@ -286,8 +283,7 @@ public final class RecordAccumulator {
                  * 步骤七：
                  *  把这个批次放入到这个队列的队尾
                  *
-                 *
-                 *  线程一把批次添加到队尾
+                 *  线程一 把批次添加到队尾
                  */
                 dq.addLast(batch);
                 incomplete.add(batch);
@@ -420,7 +416,7 @@ public final class RecordAccumulator {
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
 
-        //waiters里面有数据,说明我们的这个内存池里面内存不够了。
+        //waiters里面有数据
         //如果exhausted的值等于true，说明内存池里面的内存不够用了。
         boolean exhausted = this.free.queued() > 0;
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
@@ -437,7 +433,7 @@ public final class RecordAccumulator {
                 } else if (!readyNodes.contains(leader) && !muted.contains(part)) {
                     //首先从队列的队头获取到批次
                     RecordBatch batch = deque.peekFirst();
-                    //如果这个catch不null，我们判断一下是否可以发送这个批次。
+                    //如果这个batch不null，我们判断一下是否可以发送这个批次。
                     if (batch != null) {
                         /**
                          * batch.attempts:重试的次数
@@ -450,14 +446,14 @@ public final class RecordAccumulator {
                         /**
                          * nowMs: 当前时间
                          * batch.lastAttemptMs： 上一次重试的时间。
-                         * waitedTimeMs=这个批次已经等了多久了。
+                         * waitedTimeMs:这个批次已经等了多久了。
                          */
                         long waitedTimeMs = nowMs - batch.lastAttemptMs;
                         /**
                          * 但是我们用场景驱动的方式去分析，因为我们第一次发送数据。
                          * 所以之前也没有消息发送出去过，也就没有重试这一说。
                          *
-                         * timeToWaitMs =lingerMs
+                         * timeToWaitMs = lingerMs
                          * lingerMs
                          * 这个值默认是0，如果这个值默认是0 的话，那代表着来一条消息
                          * 就发送一条消息，那很明显是不合适的。
@@ -496,8 +492,7 @@ public final class RecordAccumulator {
                          */
                         boolean sendable = full || expired || exhausted || closed || flushInProgress();
                         if (sendable && !backingOff) {
-                            //把可以发送批次的partition的leader partition所在的主机加入到
-                            //readyNodes
+                            //把可以发送批次的partition的leader partition所在的主机加入到readyNodes
                             readyNodes.add(leader);
                         } else {
                             // Note that this results in a conservative estimate since an un-sendable partition may have
