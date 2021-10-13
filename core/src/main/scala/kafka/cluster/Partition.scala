@@ -487,6 +487,7 @@ class Partition(val topic: String,
           }
 
           // 使用log对象去写数据
+          // 看看组件初始化的方法
           val info = log.append(records, assignOffsets = true)
           // probably unblock some follower fetch requests since log end offset has been updated
           replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))

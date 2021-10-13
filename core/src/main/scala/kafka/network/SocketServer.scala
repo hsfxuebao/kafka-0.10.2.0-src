@@ -586,6 +586,7 @@ private[kafka] class Processor(val id: Int,
 
   private def processCompletedSends() {
     selector.completedSends.asScala.foreach { send =>
+      // 移除数据结构里面的一些数据信息
       val resp = inflightResponses.remove(send.destination).getOrElse {
         throw new IllegalStateException(s"Send for ${send.destination} completed, but not in `inflightResponses`")
       }

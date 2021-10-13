@@ -449,12 +449,13 @@ class Log(@volatile var dir: File,
         // todo 步骤七  根据条件判断 把内存里面的数据写到磁盘
         // 假设我们配置的10分钟刷写磁盘
         // LogManager -> startup -> 操作系统里面的机制
-        /**
-         * flushInterval 默认是long型最大值，所以基本不会执行这个操作
-         * 从内存里面刷写数据到磁盘的操作就交给操作系统，由操作系统去管理
-         * 操作系统本身有一些机制，也会定期把数据写到磁盘中
-         */
+
         if (unflushedMessages >= config.flushInterval)
+          /**
+           * flushInterval 默认是long型最大值，所以基本不会执行这个操作
+           * 从内存里面刷写数据到磁盘的操作就交给操作系统，由操作系统去管理
+           * 操作系统本身有一些机制，也会定期把数据写到磁盘中
+           */
           flush()
 
         appendInfo
@@ -723,7 +724,7 @@ class Log(@volatile var dir: File,
     if (config.retentionMs < 0) return 0
     val startMs = time.milliseconds
     // 根据时间周期来删除文件  判断时间周期
-    // 如果超出周期，就把对应的文件删除
+    // 如果超出周期，就把对应的文件删除 默认7天
     deleteOldSegments(startMs - _.largestTimestamp > config.retentionMs)
   }
 
@@ -777,11 +778,18 @@ class Log(@volatile var dir: File,
    * @return The currently active segment after (perhaps) rolling to a new segment
    */
   private def maybeRoll(messagesSize: Int, maxTimestampInMessages: Long, maxOffsetInMessages: Long): LogSegment = {
+    // 获取当前最新的segment
     val segment = activeSegment
     val now = time.milliseconds
     val reachedRollMs = segment.timeWaitedForRoll(now, maxTimestampInMessages) > config.segmentMs - segment.rollJitterMs
-    if (segment.size > config.segmentSize - messagesSize ||
+    if (
+        // 第一个条件 kafka默认一个segment的大小是1G
+        // 如果当前segment的大小在加上 将要写入进去的数据大小 超过1G 就会新建一个segment
+        segment.size > config.segmentSize - messagesSize ||
+          // 第二个条件 每隔一段时间都会新建一个
+          // 这个策略我们一般是不用的
         (segment.size > 0 && reachedRollMs) ||
+          // 第三个条件 index 或 timeIndex满了
         segment.index.isFull || segment.timeIndex.isFull || !segment.canConvertToRelativeOffset(maxOffsetInMessages)) {
       debug(s"Rolling new log segment in $name (log_size = ${segment.size}/${config.segmentSize}}, " +
           s"index_size = ${segment.index.entries}/${segment.index.maxEntries}, " +
@@ -797,8 +805,10 @@ class Log(@volatile var dir: File,
         base offset was too low to contain the next message.  This edge case is possible when a replica is recovering a
         highly compacted topic from scratch.
        */
+      // 新建一个segment
       roll(maxOffsetInMessages - Integer.MAX_VALUE)
     } else {
+      // 直接返回刚刚获取的最新的segment 说明这个segment是可用的
       segment
     }
   }
@@ -812,10 +822,19 @@ class Log(@volatile var dir: File,
   def roll(expectedNextOffset: Long = 0): LogSegment = {
     val start = time.nanoseconds
     lock synchronized {
+      /**
+       * LEO = lastoffset + 1
+       * 获取LEO的值作为最新的一个偏移量
+       * 举例子 lasfoffset=10001
+       * LEO = 10002 我们这新获取一个偏移量的时候 用的10002这个值
+       */
       val newOffset = Math.max(expectedNextOffset, logEndOffset)
+      // 新建一个文件 用LEO的名字作为文件名
       val logFile = logFilename(dir, newOffset)
+      // 创建索引文件
       val indexFile = indexFilename(dir, newOffset)
       val timeIndexFile = timeIndexFilename(dir, newOffset)
+      // 如果文件已经存在  那么删除文件
       for(file <- List(logFile, indexFile, timeIndexFile); if file.exists) {
         warn("Newly rolled segment file " + file.getName + " already exists; deleting it first")
         file.delete()
@@ -831,6 +850,7 @@ class Log(@volatile var dir: File,
           seg.log.trim()
         }
       }
+      // 新建出来的LogSegment
       val segment = new LogSegment(dir,
                                    startOffset = newOffset,
                                    indexIntervalBytes = config.indexInterval,
@@ -840,6 +860,7 @@ class Log(@volatile var dir: File,
                                    fileAlreadyExists = false,
                                    initFileSize = initFileSize,
                                    preallocate = config.preallocate)
+      // todo 把segment添加到某一个数据结构里面
       val prev = addSegment(segment)
       if(prev != null)
         throw new KafkaException("Trying to roll a new log segment for topic partition %s with start offset %d while it already exists.".format(name, newOffset))

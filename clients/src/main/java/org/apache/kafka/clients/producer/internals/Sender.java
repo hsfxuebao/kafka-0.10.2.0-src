@@ -65,6 +65,9 @@ public class Sender implements Runnable {
     private final Metadata metadata;
 
     /* the flag indicating whether the producer should guarantee the message order on the broker or not. */
+    /**
+     * 是否保证分区有序性
+     */
     private final boolean guaranteeMessageOrder;
 
     /* the maximum request size to attempt to send to the server */
@@ -122,7 +125,7 @@ public class Sender implements Runnable {
 
         // main loop, runs until close is called
         // 其实代码就是一个死循环，然后一直在运行。
-        // 所以我们要知道sender线程启动起来一以后是一直在运行的。
+        // 所以我们要知道sender线程启动起来以后是一直在运行的。
         while (running) {
             try {
                 run(time.milliseconds());
@@ -255,7 +258,6 @@ public class Sender implements Runnable {
         /**
          * 步骤六：
          *  对超时的批次是如何处理的？
-         *
          */
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
         // update sensors
@@ -277,8 +279,6 @@ public class Sender implements Runnable {
         /**
          * 步骤七：
          *      创建发送消息的请求
-         *
-         *
          * 创建请求
          * 我们往partition上面去发送消息的时候，有一些partition他们在同一台服务器上面
          * ，如果我们一分区一个分区的发送我们网络请求，那网络请求就会有一些频繁
@@ -286,7 +286,6 @@ public class Sender implements Runnable {
          * 会把发往同个broker上面partition的数据 组合成为一个请求。
          * 然后统一一次发送过去，这样子就减少了网络请求。
          */
-
         //如果网络连接没有建立好 batches其实是为空。
         //也就说其实这段代码也是不会执行。
         sendProduceRequests(batches, now);
@@ -297,7 +296,7 @@ public class Sender implements Runnable {
         // otherwise the select time will be the time difference between now and the metadata expiry time;
         /**
          * 步骤八：
-         * 真正执行网络操作的都是这个NetWordClient这个组件
+         * 真正执行网络操作的都是这个NetWorkClient这个组件
          * 包括：发送请求，接受响应（处理响应）
          */
         // 我们猜这儿可能就是去建立连接。
@@ -383,8 +382,7 @@ public class Sender implements Runnable {
      */
     private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId,
                                long now) {
-        //如果处理成功那就是成功了，但是如果服务端那儿处理失败了
-        //是不是也要给我们发送回来异常的信息。
+        //如果处理成功那就是成功了，但是如果服务端那儿处理失败了，是不是也要给我们发送回来异常的信息。
         //error 这个里面存储的就是服务端发送回来的异常码
         Errors error = response.error;
         //如果响应里面带有异常 并且 这个请求是可以重试的
@@ -464,11 +462,13 @@ public class Sender implements Runnable {
                 new ProduceRequest.Builder(acks, timeout, produceRecordsByPartition);
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             public void onComplete(ClientResponse response) {
+                // 回调函数被调用了，其实就是这个方法被执行了
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
         };
 
         String nodeId = Integer.toString(destination);
+        // 封装请求  参数包含一个回调函数
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
 
         client.send(clientRequest, now);

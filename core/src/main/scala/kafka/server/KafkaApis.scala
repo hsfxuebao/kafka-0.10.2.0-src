@@ -404,7 +404,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
 
       def produceResponseCallback(delayTimeMs: Int) {
-        // acks = 0 意味着生产者不关系数据处理的结果
+        // acks = 0 意味着生产者不关心数据处理的结果
         // 所以不需要返回响应
         if (produceRequest.acks == 0) {
           // no operation needed if producer request.required.acks = 0; however, if there is any error in handling

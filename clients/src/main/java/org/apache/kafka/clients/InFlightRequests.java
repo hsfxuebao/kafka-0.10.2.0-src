@@ -143,7 +143,9 @@ final class InFlightRequests {
             if (!deque.isEmpty()) {
                 NetworkClient.InFlightRequest request = deque.peekLast();
                 long timeSinceSend = now - request.sendTimeMs;
+                // 是否超时了
                 if (timeSinceSend > requestTimeout)
+                    // 把超时的主机的信息加入到nodeId里面
                     nodeIds.add(nodeId);
             }
         }

@@ -123,7 +123,7 @@ public final class RecordBatch {
         /**
          *
          * 我们发送数据的时候，一条消息就代表一个thunk
-         * 遍历所以我们当时发送出去消息。
+         * 遍历所有我们当时发送出去的消息。
          */
         for (Thunk thunk : thunks) {
             try {
@@ -133,8 +133,8 @@ public final class RecordBatch {
                     //大家还记不记得我们在发送数据的时候
                     //还不是绑定了一个回调函数。
                     //这儿说的调用的回调函数
-                    //就是我们开发，生产者代码的时候，我们用户传进去的那个
-                    //回调函数。
+                    //就是我们开发，生产者代码的时候，我们用户传进去的那个回调函数。
+
                     thunk.callback.onCompletion(metadata, null);
                     //带过去的就是没有异常
                     //也就是说我们生产者那儿的代码，捕获异常的时候就是发现没有异常。
@@ -195,12 +195,9 @@ public final class RecordBatch {
             // 记录异常信息
             expiryErrorMessage = (now - this.lastAppendTime) + " ms has passed since last append";
         /**
-         * lingerMs: 100ms，无论如何都要把消息发送出去的时间
-         *
+         * lingerMs: 默认0  我们 一般都会设置100ms，无论如何都要把消息发送出去的时间
          * createdMs:批次创建的时间
-         *
          * 已经大于30秒了。 说明也是超时了。
-         *
          */
         else if (!this.inRetry() && requestTimeoutMs < (now - (this.createdMs + lingerMs)))
             expiryErrorMessage = (now - (this.createdMs + lingerMs)) + " ms has passed since batch creation plus linger time";

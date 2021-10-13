@@ -401,19 +401,15 @@ public class Selector implements Selectable {
             try {
 
                 /* complete any connections that have finished their handshake (either normally or immediately) */
-
                 /**
-                 *
                  * 我们代码第一次进来应该要走的是这儿分支，因为我们前面注册的是
                  * SelectionKey key = socketChannel.register(nioSelector,
                  * SelectionKey.OP_CONNECT);
-                 *
                  */
                 if (isImmediatelyConnected || key.isConnectable()) {
                     //TODO 核心的代码来了
                     //去最后完成网络的连接
-                    //如果我们之前初始化的时候，没有完成网络连接的话，这儿一定会帮你
-                    //完成网络的连接。
+                    //如果我们之前初始化的时候，没有完成网络连接的话，这儿一定会帮你完成网络的连接。
                     if (channel.finishConnect()) {
                         //网络连接已经完成了以后，就把这个channel存储到
                         this.connected.add(channel.id());
@@ -447,7 +443,6 @@ public class Selector implements Selectable {
                 /* if channel is ready write to any sockets that have space in their buffer and for which we have data */
                 //核心代码，处理发送请求的事件
                 //selector 注册了一个OP_WRITE
-                //selector 注册了一个OP_READ
                 if (channel.ready() && key.isWritable()) {
                     //获取到我们要发送的那个网络请求。
                     //是这句代码就是要往服务端发送数据了。

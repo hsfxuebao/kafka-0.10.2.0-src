@@ -481,7 +481,7 @@ public abstract class AbstractCoordinator implements Closeable {
                         AbstractCoordinator.this.rejoinNeeded = false;
                         /**
                          * 消费组所有成员都会发送joinGroup 最终只有一个consumer是leader consumer
-                         * 是否是Leader
+                         * 判断是否是Leader
                          */
                         if (joinResponse.isLeader()) {
                             // 如果是Leader，在该方法中会进行分区分配，并将分配结果反馈给coordinator
@@ -536,7 +536,7 @@ public abstract class AbstractCoordinator implements Closeable {
     private RequestFuture<ByteBuffer> onJoinLeader(JoinGroupResponse joinResponse) {
         try {
             // perform the leader synchronization and send back the assignment for the group
-            // 进行分区分配，最终刚返回的分配结果，其中键是ConsumerID，值是序列化后的Assignment对象
+            // todo 进行分区分配，最终返回的分配结果，其中键是ConsumerID，值是序列化后的Assignment对象
             Map<String, ByteBuffer> groupAssignment = performAssignment(joinResponse.leaderId(), joinResponse.groupProtocol(),
                     joinResponse.members());
             // 将分组信息包装为SyncGroupRequest
@@ -618,6 +618,7 @@ public abstract class AbstractCoordinator implements Closeable {
         // 使用ConsumerNetworkClient发送请求，返回经过compose()适配的RequestFuture<Void>对象
         // todo 发送ApiKeys.GROUP_COORDINATOR 的请求
         return client.send(node, requestBuilder)
+                    // 对响应进行处理
                      .compose(new GroupCoordinatorResponseHandler());
     }
 

@@ -105,6 +105,12 @@ final class ClusterConnectionStates {
      */
     public void disconnected(String id, long now) {
         NodeConnectionState nodeState = nodeState(id);
+        /**
+         * 修改主机对应的连接状态：DISCONNECTED
+         * sender -> 检查网络是否可以满足发送消息的条件 -> 是否可以尝试建立网络连接
+         * 如果主机的状态是DISCONNECTED 可以尝试初始化连接
+         * 最后调用networkClient 的poll方法 去完成网络的连接
+         */
         nodeState.state = ConnectionState.DISCONNECTED;
         nodeState.lastConnectAttemptMs = now;
     }

@@ -355,7 +355,7 @@ public class NetworkClient implements KafkaClient {
 
         //这儿往inFlightRequests 组件里存 Request请求。
         //存储的就是还没有收到响应的请求。
-        //这个里面默认最多能存5个请求。
+        //这个里面默认最多能存5个请求。如果保证分区有序性，只能设置为1
         //其实我们可以猜想一个事，如果我们的请求发送出去了
         //然后也成功的接受到了响应，后面就会到这儿把这个请求移除。
         this.inFlightRequests.add(inFlightRequest);
@@ -596,7 +596,7 @@ public class NetworkClient implements KafkaClient {
             //获取broker id
             String source = receive.source();
             /**
-             * kafka 有这样的一个机制：每个连接可以容忍5个发送出去了，但是还没接收到响应的请求。
+             * kafka 有这样的一个机制：每个连接可以容忍5个发送出去了(参数配置)，但是还没接收到响应的请求。
              */
             //从数据结构里面移除已经接收到响应的请求。
             //把之前存入进去的请求也获取到了
@@ -701,8 +701,9 @@ public class NetworkClient implements KafkaClient {
         String nodeConnectionId = node.idString();
         try {
             log.debug("Initiating connection to node {} at {}:{}.", node.id(), node.host(), node.port());
-            //TODO 尝试建立连接
+
             this.connectionStates.connecting(nodeConnectionId, now);
+            //TODO 尝试建立连接
             selector.connect(nodeConnectionId,
                              new InetSocketAddress(node.host(), node.port()),
                              this.socketSendBuffer,

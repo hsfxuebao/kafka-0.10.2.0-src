@@ -79,6 +79,7 @@ public final class RecordAccumulator {
     // 未发送完成的RecordBatch集合，底层是一个Set集合
     private final IncompleteRecordBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
+    // 保证分区有序性
     private final Set<TopicPartition> muted;
     // 使用drain方法批量导出RecordBatch时，为防止饥饿，使用该字段记录上次发送停止时的位置，下次继续从此位置开始发送
     private int drainIndex;
@@ -327,7 +328,7 @@ public final class RecordAccumulator {
         List<RecordBatch> expiredBatches = new ArrayList<>();
         int count = 0;
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
-            //获取到每个分区的队列 -》 队列里面对应的批次
+            //获取到每个分区的队列 -> 队列里面对应的批次
             Deque<RecordBatch> dq = entry.getValue();
             TopicPartition tp = entry.getKey();
             // We only check if the batch should be expired if the partition does not have a batch in flight.
@@ -470,7 +471,7 @@ public final class RecordAccumulator {
                          */
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
                         /**
-                         *如果队列大于一，说明这个队列里面至少有一个批次肯定是写满了
+                         *如果队列大于1，说明这个队列里面至少有一个批次肯定是写满了
                          * 如果批次写满了肯定是可以发送数据了。
                          *当然也有可能就是这个队列里面只有一个批次，然后刚好这个批次
                          * 写满了，也可以发送数据。

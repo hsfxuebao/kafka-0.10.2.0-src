@@ -361,7 +361,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             /**
              *connections.max.idle.ms: 默认值是9分钟，一个网络连接最多空闲多久，超过这个空闲时间，就关闭这个网络连接。
              *
-             * max.in.flight.requests.per.connection：默认是5，producer -》 broker 。
+             * max.in.flight.requests.per.connection：默认是5，producer -> broker 。
              *  发送数据的时候，其实是有多个网络连接。每个网络连接可以忍受 producer端发送给broker消息 然后消息没有响应的个数。
              *  因为kafka有重试机制，所以有可能会造成数据乱序，如果想要保证有序，这个值要把设置为1.
              *
@@ -584,7 +584,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              * 步骤四：
              *  确认一下消息的大小是否超过了最大值。
              *  KafkaProdcuer初始化的时候，指定了一个参数，代表的是Producer这儿最大能发送的是一条消息能有多大
-             *  默认最大是1M，我们一般都回去修改它。
+             *  默认最大是1M，我们一般都会去修改它。
              */
             ensureValidRecordSize(serializedSize);
             /**

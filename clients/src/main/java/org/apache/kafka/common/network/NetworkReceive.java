@@ -85,8 +85,9 @@ public class NetworkReceive implements Receive {
     public long readFromReadableChannel(ReadableByteChannel channel) throws IOException {
         int read = 0;
         //size是一个4字节大小的内存空间
-        //如果size还有剩余的内存空间。
+        //如果size还有剩余的内存空间。 size 处理拆包问题
         if (size.hasRemaining()) {
+
             //先读取4字节的数据，（代表的意思就是后面跟着的消息体的大小）
             int bytesRead = channel.read(size);
             if (bytesRead < 0)
@@ -103,6 +104,9 @@ public class NetworkReceive implements Receive {
                     throw new InvalidReceiveException("Invalid receive (size = " + receiveSize + " larger than " + maxSize + ")");
                 //分配一个内存空间，这个内存空间的大小
                 //就是刚刚读出来的那个4字节的int的大小。
+                /**
+                 * 处理粘包问题 buffer
+                 */
                 this.buffer = ByteBuffer.allocate(receiveSize);
             }
         }

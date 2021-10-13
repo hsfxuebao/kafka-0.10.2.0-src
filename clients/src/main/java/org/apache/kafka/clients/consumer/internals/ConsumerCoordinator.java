@@ -549,7 +549,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         /** 其实提交偏移量信息就是提交coordinator
          *
-         *  offset -> __conusmer_offset 默认有50个分区 -> 4  leader partition 在哪个主机 这个主机就是coordinator
+         *  offset -> __conusumer_offset 默认有50个分区 -> 4  leader partition 在哪个主机 这个主机就是coordinator
          *  同时，这个消费组偏移量信息也是提交到这个一台服务器（partition 这个leader partition）
          */
         if (!coordinatorUnknown()) {
