@@ -99,16 +99,15 @@ object TopicCommand extends Logging {
       if (opts.options.has(opts.replicaAssignmentOpt)) {
         /**
          * 获取到分配的方案
-         * topic:
-         *    p0:
+         *    topic0:
          *      p0_0,p0_1,p0_2(leader) 三个副本
-         *    p1:
+         *    topic1:
          *      p1_0,p1_1,p1_2(leader) 三个副本
-         *    p2:
+         *    topic2:
          *      p2_0,p2_1,p2_2(leader) 三个副本
          *
          *    Map[Int, List[Int]] Int:broker id   List[Int]:分区号
-         *    比如：0，[p0_0, p1_0, p0_0]
+         *    比如：0，[p0_0, p1_0, p2_0]
          */
         val assignment = parseReplicaAssignment(opts.options.valueOf(opts.replicaAssignmentOpt))
         // 把分配方案写到ZK上面

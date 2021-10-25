@@ -236,7 +236,7 @@ class Partition(val topic: String,
   def updateReplicaLogReadResult(replicaId: Int, logReadResult: LogReadResult) {
     getReplica(replicaId) match {
       case Some(replica) =>
-        // 最终的更新LEO值
+        // 最终的更新LEO值（更新FETCH请求对应的replica的LEO值）
         replica.updateLogReadResult(logReadResult)
         // check if we need to expand ISR to include this replica
         // if it is not in the ISR yet
@@ -277,7 +277,7 @@ class Partition(val topic: String,
           val leaderHW = leaderReplica.highWatermark
 
           /**
-           * 判断一下是否要更新ISR裂变
+           * 判断一下是否要更新ISR列表
            * !inSyncReplicas.contains(replica) 这个replica不在ISR列表中
            * replica.logEndOffset.offsetDiff(leaderHW) >= 0
            * 这个replica的LEO值要比leader partition 的HW值要大

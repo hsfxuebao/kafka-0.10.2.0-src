@@ -255,7 +255,7 @@ public class Selector implements Selectable {
      */
     public void register(String id, SocketChannel socketChannel) throws ClosedChannelException {
         // 注册OP_READ事件，得到键
-        // Processor线程觉可以读取客户端发送过来的请求连接
+        // Processor线程就可以读取客户端发送过来的请求连接
         SelectionKey key = socketChannel.register(nioSelector, SelectionKey.OP_READ);
         // 此处会根据已知信息创建KafkaChannel对象，并将其attach到SelectionKey上
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);

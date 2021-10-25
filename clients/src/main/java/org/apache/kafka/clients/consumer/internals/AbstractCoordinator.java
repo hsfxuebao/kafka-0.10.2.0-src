@@ -366,6 +366,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
             if (future.succeeded()) {
                 needsJoinPrepare = true;
+                //
                 onJoinComplete(generation.generationId, generation.memberId, generation.protocol, future.value());
             } else {
                 // 检测发送是否失败

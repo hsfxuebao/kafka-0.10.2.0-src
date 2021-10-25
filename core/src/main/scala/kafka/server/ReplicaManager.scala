@@ -323,7 +323,7 @@ class ReplicaManager(val config: KafkaConfig,
                     entriesPerPartition: Map[TopicPartition, MemoryRecords],
                     responseCallback: Map[TopicPartition, PartitionResponse] => Unit) {
 
-    // 判断传过来acks参数是否合法
+    // 判断传过来ack参数是否合法
     if (isValidRequiredAcks(requiredAcks)) {
       val sTime = time.milliseconds
       // todo 把数据追加到本地日志里面

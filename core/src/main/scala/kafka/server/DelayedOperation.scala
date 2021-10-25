@@ -215,6 +215,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
 
     // if it cannot be completed by now and hence is watched, add to the expire queue also
     if (!operation.isCompleted) {
+      // 将延迟任务加入队列中
       timeoutTimer.add(operation)
       if (operation.isCompleted) {
         // cancel the timer task

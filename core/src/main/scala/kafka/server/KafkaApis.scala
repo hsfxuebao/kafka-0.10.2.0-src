@@ -96,14 +96,14 @@ class KafkaApis(val requestChannel: RequestChannel,
           // todo
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request)
         case ApiKeys.OFFSET_FETCH => handleOffsetFetchRequest(request)
-          // todo 处理GROUP_COORDINATOR 的请求
+          // todo 处理GROUP_COORDINATOR 的请求 目的计算出协调者在哪个主机上，然后返回客户端（消费者）
         case ApiKeys.GROUP_COORDINATOR => handleGroupCoordinatorRequest(request)
-          // todo
+          // todo 注册到COORDINATOR 对应的主机上
         case ApiKeys.JOIN_GROUP => handleJoinGroupRequest(request)
-          // todo
+          // todo 心跳检查
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
-          // todo
+          // todo 下发消费者分区方案
         case ApiKeys.SYNC_GROUP => handleSyncGroupRequest(request)
         case ApiKeys.DESCRIBE_GROUPS => handleDescribeGroupRequest(request)
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request)
@@ -1013,6 +1013,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       val responseBody = new GroupCoordinatorResponse(Errors.GROUP_AUTHORIZATION_FAILED.code, Node.noNode)
       requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
     } else {
+      // 根据 groupId 的hash值  % 50（默认值） 计算对应分区
       val partition = coordinator.partitionFor(groupCoordinatorRequest.groupId)
 
       // get metadata (and create the topic if necessary)

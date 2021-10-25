@@ -227,7 +227,7 @@ class LogManager(val logDirs: Array[File],
       /**
        * 定时更新一个检查点的文件
        * kafka服务有时候会涉及重启
-       * 重启之后需要恢复那些数据？
+       * 重启之后需要恢复那些数据？ka
        * 在这里会更新一个检查点文件-> 服务于kafka重启时恢复数据使用
        */
       scheduler.schedule("kafka-recovery-point-checkpoint",

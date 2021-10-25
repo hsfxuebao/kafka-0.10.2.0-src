@@ -254,7 +254,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           kafkaController, zkUtils, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
           clusterId, time)
 
-        // todo 就是它处理的队列里面的请求
+        // todo 就是它处理SocketServer中队列里面的请求
         requestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.requestChannel, apis, time,
           config.numIoThreads)
 
