@@ -288,7 +288,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 subscriptions.needOffsetReset(tp);
                 resetOffset(tp);
             } else {
-                // 最近一次该分区的提交不为空，则将position重置为最近一次提交的offset
+                // 分区状态中已提交的偏移量不为空，直接使用它作为拉取偏移量
                 long committed = subscriptions.committed(tp).offset();
                 log.debug("Resetting offset for partition {} to the committed offset {}", tp, committed);
                 subscriptions.seek(tp, committed);
@@ -424,7 +424,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             throw new NoOffsetForPartitionException(partition);
         long offset = offsetData.offset;
         // we might lose the assignment while fetching the offset, so check it is still active
-        // 更新分区的position为得到的offset
+        // 更新分区的拉取偏移量position为得到的offset
         if (subscriptions.isAssigned(partition))
             this.subscriptions.seek(partition, offset);
     }
@@ -647,6 +647,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         final Map<TopicPartition, OffsetData> fetchedTimestampOffsets = new HashMap<>();
         final AtomicInteger remainingResponses = new AtomicInteger(timestampsToSearchByNode.size());
         for (Map.Entry<Node, Map<TopicPartition, Long>> entry : timestampsToSearchByNode.entrySet()) {
+            // 发送LIST_OFFSETS 请求
             sendListOffsetRequest(entry.getKey(), entry.getValue(), requireTimestamps)
                     .addListener(new RequestFutureListener<Map<TopicPartition, OffsetData>>() {
                         @Override

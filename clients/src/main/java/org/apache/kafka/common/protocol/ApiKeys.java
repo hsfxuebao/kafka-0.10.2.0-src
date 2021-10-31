@@ -21,15 +21,15 @@ package org.apache.kafka.common.protocol;
  */
 public enum ApiKeys {
     PRODUCE(0, "Produce"),
-    FETCH(1, "Fetch"),
-    LIST_OFFSETS(2, "Offsets"),
+    FETCH(1, "Fetch"),  // 副本同步  消费者拉取数据
+    LIST_OFFSETS(2, "Offsets"), // 消费者fetch拉取器发送分区的主副本节点
     METADATA(3, "Metadata"),
     LEADER_AND_ISR(4, "LeaderAndIsr"),
     STOP_REPLICA(5, "StopReplica"),
-    UPDATE_METADATA_KEY(6, "UpdateMetadata"),
+    UPDATE_METADATA_KEY(6, "UpdateMetadata"),   // kafkaController 发送给存活的broker节点
     CONTROLLED_SHUTDOWN_KEY(7, "ControlledShutdown"),
     OFFSET_COMMIT(8, "OffsetCommit"),
-    OFFSET_FETCH(9, "OffsetFetch"),
+    OFFSET_FETCH(9, "OffsetFetch"),     // 消费者协调者发送给服务端的协调者请求
     GROUP_COORDINATOR(10, "GroupCoordinator"),
     JOIN_GROUP(11, "JoinGroup"),
     HEARTBEAT(12, "Heartbeat"),

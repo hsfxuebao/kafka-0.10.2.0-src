@@ -78,7 +78,7 @@ public class SubscriptionState {
     private final Set<String> groupSubscription;
 
     /* the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details) */
-    // 使用USER_ASSIGNED模式时，此集合记录了分配给当前消费者的TopicPartition集合，与subscription集合互斥
+    // 使用USER_ASSIGNED模式时，此集合记录了分配给当前消费者的TopicPartition集合，也会记录订阅模式下由协调者分配的TopicPartition集合
     private final PartitionStates<TopicPartitionState> assignment;
 
     /* do we need to request the latest committed offsets from the coordinator? */
@@ -204,6 +204,7 @@ public class SubscriptionState {
      * Change the assignment to the specified partitions returned from the coordinator,
      * note this is different from {@link #assignFromUser(Set)} which directly set the assignment from user inputs
      */
+    // 消费者分配到分区后，会调用该方法，将分区及其状态添加到assignment
     public void assignFromSubscribed(Collection<TopicPartition> assignments) {
         if (!this.partitionsAutoAssigned())
             throw new IllegalArgumentException("Attempt to dynamically assign partitions while manual assignment in use");
@@ -397,6 +398,9 @@ public class SubscriptionState {
         return assignedState(partition).resetStrategy;
     }
 
+    /**
+     * 判断是否所有分区都存在有效的偏移量
+     */
     public boolean hasAllFetchPositions(Collection<TopicPartition> partitions) {
         for (TopicPartition partition : partitions)
             if (!hasValidPosition(partition))
@@ -469,11 +473,11 @@ public class SubscriptionState {
 
     // 表示TopicPartition的消费状态
     private static class TopicPartitionState {
-        // 记录了下次要从Kafka服务端获取的消息的offset
+        // 拉取偏移量  记录了下次要从Kafka服务端获取的消息的offset
         private Long position; // last consumed position
 
         private Long highWatermark; // the high watermark from last fetch
-        // 记录了最近一次提交的offset
+        // 消费偏移量  提交偏移量  记录了最近一次提交的offset
         private OffsetAndMetadata committed;  // last committed position
         // 记录了当前TopicPartition是否处于暂停状态，用于Consumer接口的pause()方法
         private boolean paused;  // whether this partition has been paused by the user
@@ -488,9 +492,10 @@ public class SubscriptionState {
             this.resetStrategy = null;
         }
 
+        // 重置拉取偏移量 第一次分配给消费者时调用
         private void awaitReset(OffsetResetStrategy strategy) {
-            this.resetStrategy = strategy;
-            this.position = null;
+            this.resetStrategy = strategy;  // 设置重置策略
+            this.position = null;   // 清空position
         }
 
         public boolean awaitingReset() {
@@ -502,13 +507,13 @@ public class SubscriptionState {
             return position != null;
         }
 
-        // 设置下次要从Kafka服务端获取的消息的offset
+        // 开始重置 设置下次要从Kafka服务端获取的消息的offset
         private void seek(long offset) {
-            this.position = offset;
-            this.resetStrategy = null;
+            this.position = offset; // 设置position
+            this.resetStrategy = null;  // 清空重置策略
         }
 
-        // 设置position值
+        // 设置position值 更新拉取偏移量（拉取线程在拉取到消息后调用）
         private void position(long offset) {
             // 只有在position合法时才可以设置
             if (!hasValidPosition())
@@ -516,7 +521,7 @@ public class SubscriptionState {
             this.position = offset;
         }
 
-        // 设置最近一次提交的offset
+        // 设置最近一次提交的offset 更新提交偏移量（定时提交任务调用）
         private void committed(OffsetAndMetadata offset) {
             this.committed = offset;
         }

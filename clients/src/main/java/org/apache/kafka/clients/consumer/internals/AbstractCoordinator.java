@@ -86,6 +86,10 @@ import org.apache.kafka.common.errors.InterruptException;
  * before reading or writing the state of the group (e.g. generation, memberId) and holding the lock
  * when sending a request that affects the state of the group (e.g. JoinGroup, LeaveGroup).
  */
+
+/**
+ * 抽象的协调者管理了客户端的心跳状态和心跳定时任务
+ */
 public abstract class AbstractCoordinator implements Closeable {
 
     private static final Logger log = LoggerFactory.getLogger(AbstractCoordinator.class);

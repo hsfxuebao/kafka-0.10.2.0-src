@@ -487,6 +487,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 TopicPartition tp = entry.getKey();
                 // verify assignment is still active
                 if (subscriptions.isAssigned(tp))
+                    // 更新分区状态的committed 变量 协调节点保存的数据更新到客户端
                     this.subscriptions.committed(tp, entry.getValue());
             }
             this.subscriptions.commitsRefreshed();
@@ -503,6 +504,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             ensureCoordinatorReady();
 
             // contact coordinator to fetch committed offsets
+            // 发送OFFSET_FETCH 请求给协调者  获取分区已经提交的偏移量
             RequestFuture<Map<TopicPartition, OffsetAndMetadata>> future = sendOffsetFetchRequest(partitions);
             client.poll(future);
 

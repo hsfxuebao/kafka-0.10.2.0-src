@@ -1043,6 +1043,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             // 记录当前时间用于计算是否超时
             long start = time.milliseconds();
             long remaining = timeout;
+            // 消费者的一次轮询方法会调用多次pollOnce()方法
             do {
                 // todo 调用pollOnce()方法拉取消息，里面就是消费者去消费数据
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
@@ -1096,6 +1097,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         // don't know the offset for
         // 步骤二 更新要拉取 partition 的 offset（如果需要更新的话）
         if (!subscriptions.hasAllFetchPositions())
+            // 更新拉取偏移量等
             updateFetchPositions(this.subscriptions.missingFetchPositions());
 
         // if data is available already, return it immediately、
@@ -1668,9 +1670,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             // seek to the last committed position or reset using the auto reset policy
 
             // first refresh commits for all assigned partitions
+            // 更新提交偏移量
             coordinator.refreshCommittedOffsetsIfNeeded();
 
             // then do any offset lookups in case some positions are not known
+            // 更新分区的拉取偏移量
             fetcher.updateFetchPositions(partitions);
         }
     }
