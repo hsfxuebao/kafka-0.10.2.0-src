@@ -33,6 +33,7 @@ import java.util.Set;
  * userData in the returned Subscription. For example, to have a rack-aware assignor, an implementation
  * can use this user data to forward the rackId belonging to each member.
  */
+// 分区分配器接口，负责执行分区分配的具体算法
 public interface PartitionAssignor {
 
     /**
@@ -43,6 +44,7 @@ public interface PartitionAssignor {
      *               and variants
      * @return Non-null subscription with optional user data
      */
+    // 每个消费者都有订阅的主题列表，Subscriptions 是消费者的订阅信息
     Subscription subscription(Set<String> topics);
 
     /**
@@ -52,6 +54,7 @@ public interface PartitionAssignor {
      * @return A map from the members to their respective assignment. This should have one entry
      *         for all members who in the input subscription map.
      */
+    // 只有主消费者会调用assign()
     Map<String, Assignment> assign(Cluster metadata, Map<String, Subscription> subscriptions);
 
 

@@ -52,6 +52,7 @@ class GroupMetadataManager(val brokerId: Int,
 
   private val compressionType: CompressionType = CompressionType.forId(config.offsetsTopicCompressionCodec.codec)
 
+  // todo 消费组的元数据管理器（GroupMetadataManager）保存了消费组的分配结果
   private val groupMetadataCache = new Pool[String, GroupMetadata]
 
   /* lock protecting access to loading and owned partition sets */
@@ -114,22 +115,27 @@ class GroupMetadataManager(val brokerId: Int,
   /**
    * Get the group associated with the given groupId, or null if not found
    */
+    // 根据消费组编号获取"消费组元数据"，从缓存中获取，如果不存在就创建
   def getGroup(groupId: String): Option[GroupMetadata] = {
     Option(groupMetadataCache.get(groupId))
   }
 
   /**
    * Add a group or get the group associated with the given groupId if it already exists
+   * 添加一个消费组元数据，参数和返回值都是"消费组元数据"对象，在这之后如果给"组元数据"添加
+   * 消费者的"成员元数据"，这些"成员元数据"也自动存在缓存中
    */
   def addGroup(group: GroupMetadata): GroupMetadata = {
     val currentGroup = groupMetadataCache.putIfNotExists(group.groupId, group)
     if (currentGroup != null) {
       currentGroup
     } else {
+      // 如果已经存在了，直接返回已有的"组元数据"
       group
     }
   }
 
+  // todo 预先准备StoreGroup 创建一个DelayedStore，真正的存储还是交给store方法
   def prepareStoreGroup(group: GroupMetadata,
                         groupAssignment: Map[String, Array[Byte]],
                         responseCallback: Errors => Unit): Option[DelayedStore] = {
@@ -151,6 +157,7 @@ class GroupMetadataManager(val brokerId: Int,
         val generationId = group.generationId
 
         // set the callback function to insert the created group into cache after log append completed
+        // 回调方法传入putCacheCallback()，调用该方法时，会真正调用responseCallback
         def putCacheCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
           // the append response should only contain the topics partition
           if (responseStatus.size != 1 || !responseStatus.contains(groupMetadataPartition))
@@ -207,14 +214,16 @@ class GroupMetadataManager(val brokerId: Int,
     }
   }
 
+  // 把prepareStoreGroup的回调作为方法的参数和kafkaApi处理其他请求的方式是一样的
   def store(delayedStore: DelayedStore) {
     // call replica manager to append the group message
+    // 保存消费组的分配结果 和追加消息方式都是一样的
     replicaManager.appendRecords(
-      config.offsetCommitTimeoutMs.toLong,
-      config.offsetCommitRequiredAcks,
+      config.offsetCommitTimeoutMs.toLong,  // 超时时间
+      config.offsetCommitRequiredAcks,  // 是否需要应答
       true, // allow appending to internal offset topic
-      delayedStore.partitionRecords,
-      delayedStore.callback)
+      delayedStore.partitionRecords,  // 消息集
+      delayedStore.callback)  // 来自putCacheCallback，本质上市响应回调方法
   }
 
   /**
@@ -1072,6 +1081,9 @@ object GroupMetadataManager {
 
 }
 
+/**
+ * 延迟的存储操作，包括要存储的消息集合回调方法
+ */
 case class DelayedStore(partitionRecords: Map[TopicPartition, MemoryRecords],
                         callback: Map[TopicPartition, PartitionResponse] => Unit)
 

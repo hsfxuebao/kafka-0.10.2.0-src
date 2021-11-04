@@ -501,6 +501,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 log.debug("Attempt to join group {} rejected since coordinator {} is loading the group.", groupId,
                         coordinator());
                 // backoff and retry
+                // 有异常，完成异步请求，但不成功
                 future.raise(error);
             } else if (error == Errors.UNKNOWN_MEMBER_ID) {
                 // reset the member id and retry immediately

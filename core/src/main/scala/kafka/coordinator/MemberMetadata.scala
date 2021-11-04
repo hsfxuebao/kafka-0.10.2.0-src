@@ -61,7 +61,9 @@ private[coordinator] class MemberMetadata(val memberId: String,
                                           var supportedProtocols: List[(String, Array[Byte])]) {
 
   var assignment: Array[Byte] = Array.empty[Byte]
+  // 对应加入组的回调方法
   var awaitingJoinCallback: JoinGroupResult => Unit = null
+  // 对应同步组的回调方法
   var awaitingSyncCallback: (Array[Byte], Short) => Unit = null
   var latestHeartbeat: Long = -1
   var isLeaving: Boolean = false

@@ -86,6 +86,7 @@ public interface ConsumerRebalanceListener {
      *
      * @param partitions The list of partitions that were assigned to the consumer on the last rebalance
      */
+    // 消费者准备加入组，调用"消费者在平衡监听器"的onPartitionsRevoked()方法
     void onPartitionsRevoked(Collection<TopicPartition> partitions);
 
     /**
@@ -100,5 +101,6 @@ public interface ConsumerRebalanceListener {
      * @param partitions The list of partitions that are now assigned to the consumer (may include partitions previously
      *            assigned to the consumer)
      */
+    // 消费者完成加入组，调用"消费者再平衡监听器"的onPartitionsAssigned()方法
     void onPartitionsAssigned(Collection<TopicPartition> partitions);
 }

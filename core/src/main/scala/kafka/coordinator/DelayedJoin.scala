@@ -28,6 +28,7 @@ import kafka.server.DelayedOperation
  * When the operation has expired, any known members that have not requested to re-join
  * the group are marked as failed, and complete this operation to proceed rebalance with
  * the rest of the group.
+ * 延迟的加入组操作
  */
 private[coordinator] class DelayedJoin(coordinator: GroupCoordinator,
                                        group: GroupMetadata,

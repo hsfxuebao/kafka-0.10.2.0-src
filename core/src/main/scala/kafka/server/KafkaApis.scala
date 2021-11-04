@@ -98,12 +98,12 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.OFFSET_FETCH => handleOffsetFetchRequest(request)
           // todo 处理GROUP_COORDINATOR 的请求 目的计算出协调者在哪个主机上，然后返回客户端（消费者）
         case ApiKeys.GROUP_COORDINATOR => handleGroupCoordinatorRequest(request)
-          // todo 注册到COORDINATOR 对应的主机上
+          // todo 注册到COORDINATOR 对应的主机上  加入组  请求
         case ApiKeys.JOIN_GROUP => handleJoinGroupRequest(request)
           // todo 心跳检查
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
-          // todo 下发消费者分区方案
+          // todo 下发消费者分区方案 同步组请求
         case ApiKeys.SYNC_GROUP => handleSyncGroupRequest(request)
         case ApiKeys.DESCRIBE_GROUPS => handleDescribeGroupRequest(request)
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request)
@@ -1104,14 +1104,14 @@ class KafkaApis(val requestChannel: RequestChannel,
         (protocol.name, Utils.toArray(protocol.metadata))).toList
       // todo 处理请求
       coordinator.handleJoinGroup(
-        joinGroupRequest.groupId,
-        joinGroupRequest.memberId,
-        request.header.clientId,
-        request.session.clientAddress.toString,
-        joinGroupRequest.rebalanceTimeout,
-        joinGroupRequest.sessionTimeout,
-        joinGroupRequest.protocolType,
-        protocols,
+        joinGroupRequest.groupId, // 消费者编号
+        joinGroupRequest.memberId,  // 消费者成员编号
+        request.header.clientId,  // 客户端编号
+        request.session.clientAddress.toString, // 客户端地址
+        joinGroupRequest.rebalanceTimeout,  // 重平衡超时时间
+        joinGroupRequest.sessionTimeout,  // 会话超时时间
+        joinGroupRequest.protocolType,  // 协议类型
+        protocols,  // 协议内容（协议名称和元数据）
         sendResponseCallback)
     }
   }
@@ -1119,6 +1119,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleSyncGroupRequest(request: RequestChannel.Request) {
     val syncGroupRequest = request.body.asInstanceOf[SyncGroupRequest]
 
+    // 首先  定义"发送同步组响应结果"的回调方法
     def sendResponseCallback(memberState: Array[Byte], errorCode: Short) {
       val responseBody = new SyncGroupResponse(errorCode, ByteBuffer.wrap(memberState))
       requestChannel.sendResponse(new Response(request, responseBody))

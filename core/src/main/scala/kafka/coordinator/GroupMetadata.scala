@@ -140,6 +140,11 @@ case class GroupSummary(state: String,
  *  2. generation id
  *  3. leader id
  */
+/**
+ * 消费组的元数据管理了所有的消费者成员元数据
+ * @param groupId
+ * @param initialState
+ */
 @nonthreadsafe
 private[coordinator] class GroupMetadata(val groupId: String, initialState: GroupState = Empty) {
 
@@ -149,8 +154,11 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
   private val pendingOffsetCommits = new mutable.HashMap[TopicPartition, OffsetAndMetadata]
 
   var protocolType: Option[String] = None
+  // 纪元编号
   var generationId = 0
+  // 只有一个主消费者
   var leaderId: String = null
+  // 只有一个协议
   var protocol: String = null
 
   def is(groupState: GroupState) = state == groupState
@@ -158,6 +166,7 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
   def has(memberId: String) = members.contains(memberId)
   def get(memberId: String) = members(memberId)
 
+  // 添加或删除消费者的成员元数据时，会更新主消费者编号
   def add(member: MemberMetadata) {
     if (members.isEmpty)
       this.protocolType = Some(member.protocolType)
@@ -175,10 +184,12 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
 
   def remove(memberId: String) {
     members.remove(memberId)
+    // 如果删除的是主消费者
     if (memberId == leaderId) {
       leaderId = if (members.isEmpty) {
         null
       } else {
+        // todo 下一个成员成为主消费者
         members.keys.head
       }
     }
@@ -186,12 +197,14 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
 
   def currentState = state
 
+  // todo 没有发送"重新加入消费组"的成员，已经在members中，但是没有回调对象
   def notYetRejoinedMembers = members.values.filter(_.awaitingJoinCallback == null).toList
 
   def allMembers = members.keySet
 
   def allMemberMetadata = members.values.toList
 
+  // todo 消费组的再平衡超时时间 消费者成员中最大的再平衡超时时间
   def rebalanceTimeoutMs = members.values.foldLeft(0) { (timeout, member) =>
     timeout.max(member.rebalanceTimeoutMs)
   }
@@ -237,9 +250,9 @@ private[coordinator] class GroupMetadata(val groupId: String, initialState: Grou
   def initNextGeneration() = {
     assert(notYetRejoinedMembers == List.empty[MemberMetadata])
     if (members.nonEmpty) {
-      generationId += 1
-      protocol = selectProtocol
-      transitionTo(AwaitingSync)
+      generationId += 1 // 增加纪元编号
+      protocol = selectProtocol // 从所有消费者的协议中选择一个统一的消费组协议
+      transitionTo(AwaitingSync)  // 发送响应之前更改状态为"等待同步"
     } else {
       generationId += 1
       protocol = null
