@@ -48,6 +48,7 @@ import kafka.common.InvalidOffsetException
  * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal 
  * storage format.
  */
+// 索引文件
 class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
     extends AbstractIndex[Long, Int](file, baseOffset, maxIndexSize) {
 
@@ -82,9 +83,12 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
    *         If the target offset is smaller than the least entry in the index (or the index is empty),
    *         the pair (baseOffset, 0) is returned.
    */
+    // 查询索引文件
   def lookup(targetOffset: Long): OffsetPosition = {
     maybeLock(lock) {
+      // 查询mmap会发生变化，先复制一个出来
       val idx = mmap.duplicate
+      // 二分查找
       val slot = indexSlotFor(idx, targetOffset, IndexSearchType.KEY)
       if(slot == -1)
         OffsetPosition(baseOffset, 0)
@@ -93,11 +97,15 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
     }
   }
 
+  // 获取索引文件第n个索引条目的相对偏移量
   private def relativeOffset(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize)
 
+  // 获取索引文件第n个索引条目的物理位置值
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
   override def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry = {
+      // baseOffset + relativeOffset(buffer, n) 基准偏移量加上相对偏移量
+      // physical(buffer, n) 绝对偏移量在数据文件中对应的物理位置
       OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
   }
   
@@ -117,6 +125,8 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
 
   /**
    * Append an entry for the given offset/location pair to the index. This entry must have a larger offset than all subsequent entries.
+   * offset： 消息的绝对偏移量
+   * position：未追加消息前数据文件的大小，即物理位置
    */
   def append(offset: Long, position: Int) {
     inLock(lock) {
@@ -124,9 +134,9 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
       if (_entries == 0 || offset > _lastOffset) {
         debug("Adding index entry %d => %d to %s.".format(offset, position, file.getName))
         // NIO offset 逻辑上的位置  0 1 2
-        mmap.putInt((offset - baseOffset).toInt)
+        mmap.putInt((offset - baseOffset).toInt)  // 存储相对偏移量
         // 物理上的位置：写这条数据在磁盘的哪个位置
-        mmap.putInt(position)
+        mmap.putInt(position) // 存储消息的物理位置
 
         /**
          * 结论：我们写索引的时候，会记录两个位置：一个是逻辑上位置，平时说的offset (偏移量)

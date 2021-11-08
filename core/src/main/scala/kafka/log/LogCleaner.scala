@@ -68,6 +68,7 @@ import JavaConverters._
  * @param logDirs The directories where offset checkpoints reside
  * @param logs The pool of logs
  * @param time A way to control the passage of time
+ * 日志清理器通过管理器选择日志，并通过清理器执行日志的清理工作
  */
 class LogCleaner(val config: CleanerConfig,
                  val logDirs: Array[File],
@@ -75,6 +76,7 @@ class LogCleaner(val config: CleanerConfig,
                  time: Time = Time.SYSTEM) extends Logging with KafkaMetricsGroup {
   
   /* for managing the state of partitions being cleaned. package-private to allow access in tests */
+  // 一个日志清理的管理器和多个清理器线程
   private[log] val cleanerManager = new LogCleanerManager(logDirs, logs)
 
   /* a throttle used to limit the I/O of all the cleaner threads to a user-specified maximum rate */
@@ -86,6 +88,7 @@ class LogCleaner(val config: CleanerConfig,
                                         time = time)
   
   /* the threads */
+  // 启动所有清理器线程
   private val cleaners = (0 until config.numThreads).map(new CleanerThread(_))
   
   /* a metric to track the maximum utilization of any thread's buffer in the last cleaning */
@@ -194,6 +197,7 @@ class LogCleaner(val config: CleanerConfig,
     if(config.dedupeBufferSize / config.numThreads > Int.MaxValue)
       warn("Cannot use more than 2G of cleaner buffer space per cleaner thread, ignoring excess buffer space...")
 
+    // 每个清理器线程都有一个清理器，每个线程每次运行时只清理一个日志
     val cleaner = new Cleaner(id = threadId,
                               offsetMap = new SkimpyOffsetMap(memory = math.min(config.dedupeBufferSize / config.numThreads, Int.MaxValue).toInt, 
                                                               hashAlgorithm = config.hashAlgorithm),
@@ -231,6 +235,7 @@ class LogCleaner(val config: CleanerConfig,
      * Clean a log if there is a dirty log available, otherwise sleep for a bit
      */
     private def cleanOrSleep() {
+      // 选择一个最需要清理(肮脏)的日志
       val cleaned = cleanerManager.grabFilthiestCompactedLog(time) match {
         case None =>
           false
@@ -238,12 +243,14 @@ class LogCleaner(val config: CleanerConfig,
           // there's a log, clean it
           var endOffset = cleanable.firstDirtyOffset
           try {
+            // 开始清理这个日志
             val (nextDirtyOffset, cleanerStats) = cleaner.clean(cleanable)
             recordStats(cleaner.id, cleanable.log.name, cleanable.firstDirtyOffset, endOffset, cleanerStats)
             endOffset = nextDirtyOffset
           } catch {
             case _: LogCleaningAbortedException => // task can be aborted, let it go.
           } finally {
+            // 清理完成，会更新日志的清理点，并写入到检查点文件中
             cleanerManager.doneCleaning(cleanable.topicPartition, cleanable.log.dir.getParentFile, endOffset)
           }
           true
@@ -304,6 +311,7 @@ class LogCleaner(val config: CleanerConfig,
  * @param time The time instance
  * @param checkDone Check if the cleaning for a partition is finished or aborted.
  */
+// 日志清理
 private[log] class Cleaner(val id: Int,
                            val offsetMap: OffsetMap,
                            ioBufferSize: Int,
@@ -318,9 +326,11 @@ private[log] class Cleaner(val id: Int,
   this.logIdent = "Cleaner " + id + ": "
 
   /* buffer used for read i/o */
+  // 读取旧的日志分段
   private var readBuffer = ByteBuffer.allocate(ioBufferSize)
   
   /* buffer used for write i/o */
+  // 写入新的日志分段
   private var writeBuffer = ByteBuffer.allocate(ioBufferSize)
 
   require(offsetMap.slots * dupBufferLoadFactor > 1, "offset map is too small to fit in even a single message, so log cleaning will never make progress. You can increase log.cleaner.dedupe.buffer.size or decrease log.cleaner.threads")
@@ -340,13 +350,16 @@ private[log] class Cleaner(val id: Int,
 
     // build the offset map
     info("Building offset map for %s...".format(cleanable.log.name))
+    // 上限
     val upperBoundOffset = cleanable.firstUncleanableOffset
+    // 构建日志头部的映射表 起始位置为清理点之后的日志头部 结束位置为活动分段的基准偏移量
     buildOffsetMap(log, cleanable.firstDirtyOffset, upperBoundOffset, offsetMap, stats)
     val endOffset = offsetMap.latestOffset + 1
     stats.indexDone()
     
     // figure out the timestamp below which it is safe to remove delete tombstones
     // this position is defined to be a configurable time beneath the last modified time of the last clean segment
+    // 删除点，用来判断日志分段是否需要保留墓碑标记
     val deleteHorizonMs = 
       log.logSegments(0, cleanable.firstDirtyOffset).lastOption match {
         case None => 0L
@@ -359,14 +372,16 @@ private[log] class Cleaner(val id: Int,
 
     // group the segments and clean the groups
     info("Cleaning log %s (cleaning prior to %s, discarding tombstones prior to %s)...".format(log.name, new Date(cleanableHorizonMs), new Date(deleteHorizonMs)))
+    // 从0到结束位置，表示日志头部和尾部的所有日志分段都要参与压缩操作
     for (group <- groupSegmentsBySize(log.logSegments(0, endOffset), log.config.segmentSize, log.config.maxIndexSize))
+      // 将多个之前压缩过的小文件放在同一组中一起压缩
       cleanSegments(log, group, offsetMap, deleteHorizonMs, stats)
 
     // record buffer utilization
     stats.bufferUtilization = offsetMap.utilization
     
     stats.allDone()
-
+    // endOffset 表示日志的最新清理点
     (endOffset, stats)
   }
 
@@ -378,6 +393,7 @@ private[log] class Cleaner(val id: Int,
    * @param map The offset map to use for cleaning segments
    * @param deleteHorizonMs The time to retain delete tombstones
    * @param stats Collector for cleaning statistics
+   * 清理一个分组内的所有日志分段，最后一个新的日志分段代替所有旧的日志分段
    */
   private[log] def cleanSegments(log: Log,
                                  segments: Seq[LogSegment], 
@@ -385,6 +401,7 @@ private[log] class Cleaner(val id: Int,
                                  deleteHorizonMs: Long,
                                  stats: CleanerStats) {
     // create a new segment with the suffix .cleaned appended to both the log and index name
+    // 开始清理之前，先创建临时的数据文件、索引文件、消息集、日志分段等对象
     val logFile = new File(segments.head.log.file.getPath + Log.CleanedFileSuffix)
     logFile.delete()
     val indexFile = new File(segments.head.index.file.getPath + Log.CleanedFileSuffix)
@@ -398,7 +415,9 @@ private[log] class Cleaner(val id: Int,
 
     try {
       // clean segments into the new destination segment
+      // 清理这个分组内的所有日志分段
       for (old <- segments) {
+        // 是否需要保留墓碑标记
         val retainDeletes = old.lastModified > deleteHorizonMs
         info("Cleaning segment %s in log %s (largest timestamp %s) into %s, %s deletes."
             .format(old.baseOffset, log.name, new Date(old.largestTimestamp), cleaned.baseOffset, if(retainDeletes) "retaining" else "discarding"))
@@ -415,14 +434,17 @@ private[log] class Cleaner(val id: Int,
       timeIndex.trimToValidSize()
 
       // flush new segment to disk before swap
+      // 交换前，先将新的日志分段刷新到磁盘
       cleaned.flush()
 
       // update the modification date to retain the last modified date of the original files
       val modified = segments.last.lastModified
+      // 保持修改时间不变
       cleaned.lastModified = modified
 
       // swap in new segment
       info("Swapping in cleaned segment %d for segment(s) %s in log %s.".format(cleaned.baseOffset, segments.map(_.baseOffset).mkString(","), log.name))
+      // 将新日志分段替换掉旧的日志分段
       log.replaceSegments(cleaned, segments)
     } catch {
       case e: LogCleaningAbortedException =>
@@ -442,6 +464,7 @@ private[log] class Cleaner(val id: Int,
    * @param retainDeletes Should delete tombstones be retained while cleaning this segment
    * @param maxLogMessageSize The maximum message size of the corresponding topic
    * @param stats Collector for cleaning statistics
+   * 将旧的日志分段复制到新的日志分段中
    */
   private[log] def cleanInto(topicPartition: TopicPartition,
                              source: LogSegment,
@@ -456,12 +479,13 @@ private[log] class Cleaner(val id: Int,
     }
 
     var position = 0
+    // 循坏
     while (position < source.log.sizeInBytes) {
       checkDone(topicPartition)
       // read a chunk of messages and copy any that are to be retained to the write buffer to be written out
       readBuffer.clear()
       writeBuffer.clear()
-
+      // 读取旧日志分段，暂存到读缓冲区
       source.log.readInto(readBuffer, position)
       val records = MemoryRecords.readableRecords(readBuffer)
       throttler.maybeThrottle(records.sizeInBytes)
@@ -469,11 +493,11 @@ private[log] class Cleaner(val id: Int,
       stats.readMessages(result.messagesRead, result.bytesRead)
       stats.recopyMessages(result.messagesRetained, result.bytesRetained)
 
-      position += result.bytesRead
+      position += result.bytesRead // 增加计数器，用来判断是否读完旧的日志分段
 
       // if any messages are to be retained, write them out
       if (writeBuffer.position > 0) {
-        writeBuffer.flip()
+        writeBuffer.flip() // 开始将写缓冲区的内容追加到新的日志分段中
         val retained = MemoryRecords.readableRecords(writeBuffer)
         dest.append(firstOffset = retained.deepEntries.iterator.next().offset,
           largestOffset = result.maxOffset,
@@ -490,6 +514,7 @@ private[log] class Cleaner(val id: Int,
     restoreBuffers()
   }
 
+  // 判断这条消息是否保留
   private def shouldRetainMessage(source: kafka.log.LogSegment,
                                   map: kafka.log.OffsetMap,
                                   retainDeletes: Boolean,
@@ -502,12 +527,15 @@ private[log] class Cleaner(val id: Int,
 
     if (entry.record.hasKey) {
       val key = entry.record.key
+      // 消息的键是否在映射表中
       val foundOffset = map.get(key)
       /* two cases in which we can get rid of a message:
        *   1) if there exists a message with the same key but higher offset
        *   2) if the message is a delete "tombstone" marker and enough time has passed
        */
+      // 消息的偏移量比映射表中的低，说明这条消息不需要复制，不需要保留，它是冗余的
       val redundant = foundOffset >= 0 && entry.offset < foundOffset
+      // 判断墓碑标记是否需要保留，消息没有值，就是一个墓碑标记
       val obsoleteDelete = !retainDeletes && entry.record.hasNullValue
       !redundant && !obsoleteDelete
     } else {
@@ -550,21 +578,23 @@ private[log] class Cleaner(val id: Int,
    *
    * @return A list of grouped segments
    */
+    // 将所有参与压缩的日志分段进行分组，每一组的总大小不能超过日志分段的阈值
   private[log] def groupSegmentsBySize(segments: Iterable[LogSegment], maxSize: Int, maxIndexSize: Int): List[Seq[LogSegment]] = {
-    var grouped = List[List[LogSegment]]()
-    var segs = segments.toList
+    var grouped = List[List[LogSegment]]() // 所有分组
+    var segs = segments.toList // 所有参与压缩的日志分段
     while(segs.nonEmpty) {
-      var group = List(segs.head)
+      var group = List(segs.head) // 第一个分组
       var logSize = segs.head.size
       var indexSize = segs.head.index.sizeInBytes
       var timeIndexSize = segs.head.timeIndex.sizeInBytes
       segs = segs.tail
+      // 直到一组满了才会退出循环，然后重新从第一个while循环开始下一组
       while(segs.nonEmpty &&
             logSize + segs.head.size <= maxSize &&
             indexSize + segs.head.index.sizeInBytes <= maxIndexSize &&
             timeIndexSize + segs.head.timeIndex.sizeInBytes <= maxIndexSize &&
             segs.head.index.lastOffset - group.last.index.baseOffset <= Int.MaxValue) {
-        group = segs.head :: group
+        group = segs.head :: group // 追加到当前分组中
         logSize += segs.head.size
         indexSize += segs.head.index.sizeInBytes
         timeIndexSize += segs.head.timeIndex.sizeInBytes
@@ -707,13 +737,17 @@ private class CleanerStats(time: Time = Time.SYSTEM) {
 
 /**
  * Helper class for a log, its topic/partition, the first cleanable position, and the first uncleanable dirty position
+ * 需要清理的日志，每个分区都会根据清理点的位置构造一个这样的对象
  */
 private case class LogToClean(topicPartition: TopicPartition, log: Log, firstDirtyOffset: Long, uncleanableOffset: Long) extends Ordered[LogToClean] {
+  // 日志尾部的大小，从-1到日志的清理点，起始位置的值为-1
   val cleanBytes = log.logSegments(-1, firstDirtyOffset).map(_.size).sum
   private[this] val firstUncleanableSegment = log.logSegments(uncleanableOffset, log.activeSegment.baseOffset).headOption.getOrElse(log.activeSegment)
   val firstUncleanableOffset = firstUncleanableSegment.baseOffset
+  // 日志头部的大小，从日志清理点到活动日志分段的基准偏移量，不包括活动的日志分段
   val cleanableBytes = log.logSegments(firstDirtyOffset, math.max(firstDirtyOffset, firstUncleanableOffset)).map(_.size).sum
   val totalBytes = cleanBytes + cleanableBytes
+  // 头部表示未清理的区域，计算比率 = 头部大小 / (头部大小+尾部大小)
   val cleanableRatio = cleanableBytes / totalBytes.toDouble
   override def compare(that: LogToClean): Int = math.signum(this.cleanableRatio - that.cleanableRatio).toInt
 }

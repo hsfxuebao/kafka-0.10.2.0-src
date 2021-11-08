@@ -31,6 +31,9 @@ import java.security.Principal;
 
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 
+/**
+ * kafk的网络传输层
+ */
 public class PlaintextTransportLayer implements TransportLayer {
     private final SelectionKey key;
     private final SocketChannel socketChannel;
@@ -218,6 +221,9 @@ public class PlaintextTransportLayer implements TransportLayer {
         return key.isValid() && (key.interestOps() & SelectionKey.OP_READ) == 0;
     }
 
+    /**
+     * 表示文件通道的字节会传入网络通道
+     */
     @Override
     public long transferFrom(FileChannel fileChannel, long position, long count) throws IOException {
         return fileChannel.transferTo(position, count, socketChannel);

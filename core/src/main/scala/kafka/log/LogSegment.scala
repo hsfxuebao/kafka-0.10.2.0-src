@@ -46,6 +46,7 @@ import scala.math._
  * @param indexIntervalBytes The approximate number of bytes between entries in the index
  * @param time The time instance
  */
+ // 日志分段，由数据文件和索引文件组成,基准偏移量是每个日志分段的标识
 @nonthreadsafe
 class LogSegment(val log: FileRecords,
                  val index: OffsetIndex,
@@ -67,6 +68,7 @@ class LogSegment(val log: FileRecords,
   @volatile private var maxTimestampSoFar = timeIndex.lastEntry.timestamp
   @volatile private var offsetOfMaxTimestamp = timeIndex.lastEntry.offset
 
+   // 创建新的日志分段，会创建数据文件和索引文件，他们的文件名都已基准偏移量开头
   def this(dir: File, startOffset: Long, indexIntervalBytes: Int, maxIndexSize: Int, rollJitterMs: Long, time: Time, fileAlreadyExists: Boolean = false, initFileSize: Int = 0, preallocate: Boolean = false) =
     this(FileRecords.open(Log.logFilename(dir, startOffset), fileAlreadyExists, initFileSize, preallocate),
          new OffsetIndex(Log.indexFilename(dir, startOffset), baseOffset = startOffset, maxIndexSize = maxIndexSize),
@@ -144,9 +146,12 @@ class LogSegment(val log: FileRecords,
    * @return The position in the log storing the message with the least offset >= the requested offset and the size of the
     *        message or null if no message meets this criteria.
    */
+    // 日志分段将起始偏移量转换成文件的起始物理位置
   @threadsafe
   private[log] def translateOffset(offset: Long, startingFilePosition: Int = 0): LogEntryPosition = {
+      // 查询索引文件，返回值包括偏移量和物理位置，但不一定准确地对应到起始偏移量
     val mapping = index.lookup(offset)
+      // 搜索数据文件，返回值包括偏移量和物理位置，而且一定准确地对应到起始偏移量
     log.searchForOffsetWithSize(offset, max(mapping.position, startingFilePosition))
   }
 
@@ -170,6 +175,7 @@ class LogSegment(val log: FileRecords,
       throw new IllegalArgumentException("Invalid max size for log read (%d)".format(maxSize))
 
     val logSize = log.sizeInBytes // this may change, need to save a consistent copy
+    // 将起始偏移量转换成起始位置
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -177,6 +183,7 @@ class LogSegment(val log: FileRecords,
       return null
 
     val startPosition = startOffsetAndSize.position.toInt
+    // 起始偏移量，日志分段的基准偏移量、数据文件的起始读取位置
     val offsetMetadata = new LogOffsetMetadata(startOffset, this.baseOffset, startPosition)
 
     val adjustedMaxSize =
@@ -188,11 +195,12 @@ class LogSegment(val log: FileRecords,
       return FetchDataInfo(offsetMetadata, MemoryRecords.EMPTY)
 
     // calculate the length of the message set to read based on whether or not they gave us a maxOffset
+    // 计算要读取多长的消息
     val length = maxOffset match {
       case None =>
         // no max offset, just read until the max position
         min((maxPosition - startPosition).toInt, adjustedMaxSize)
-      case Some(offset) =>
+      case Some(offset) => // 指定最大偏移量，也要转换为文件的物理位置
         // there is a max offset, translate it to a file position and use that to calculate the max read size;
         // when the leader of a partition changes, it's possible for the new leader's high watermark to be less than the
         // true high watermark in the previous leader for a short window. In this window, if a consumer fetches on an
@@ -208,7 +216,7 @@ class LogSegment(val log: FileRecords,
         min(min(maxPosition, endPosition) - startPosition, adjustedMaxSize).toInt
     }
 
-    // todo log.read方法
+    // todo log.read方法  log.read(startPosition, length) 根据起始位置和读取长度，读取数据文件
     FetchDataInfo(offsetMetadata, log.read(startPosition, length),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }

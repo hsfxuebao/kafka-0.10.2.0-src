@@ -82,7 +82,7 @@ case class LogAppendInfo(var firstOffset: Long,
  * @param recoveryPoint The offset at which to begin recovery--i.e. the first offset which has not been flushed to disk
  * @param scheduler The thread pool scheduler used for background actions
  * @param time The time instance used for checking the clock
- *
+ * 日志对应的目录
  */
 @threadsafe
 class Log(@volatile var dir: File,
@@ -106,6 +106,7 @@ class Log(@volatile var dir: File,
       0
   }
 
+  // 追加消息集到日志
   @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
   /* the actual segments of the log */
@@ -114,6 +115,7 @@ class Log(@volatile var dir: File,
    * key: 文件名（base offset）
    * value : 就是一个segment
    * 目的就是为了可以根据offset的大小快速定位
+   * 日志包含多个日志分段,字典数据结构的键是日志分段的基准偏移量
    */
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
   locally {
@@ -121,6 +123,8 @@ class Log(@volatile var dir: File,
 
     loadSegments()
     /* Calculate the offset of the next message */
+    // activeSegment.nextOffset() 下一条消息的偏移量 activeSegment.baseOffset 日志分段的基准偏移量
+    // activeSegment.size.toInt 日志分段的大小
     nextOffsetMetadata = new LogOffsetMetadata(activeSegment.nextOffset(), activeSegment.baseOffset,
       activeSegment.size.toInt)
 
@@ -128,6 +132,7 @@ class Log(@volatile var dir: File,
       .format(name, segments.size(), logEndOffset, time.milliseconds - startMs))
   }
 
+  // 一个日志的目录对应一个分区
   val topicPartition: TopicPartition = Log.parseTopicPartitionName(dir)
 
   private val tags = Map("topic" -> topicPartition.topic, "partition" -> topicPartition.partition.toString)
@@ -289,6 +294,11 @@ class Log(@volatile var dir: File,
     }
   }
 
+  /**
+   * 更新日志"最近偏移量"，传入的参数一般是最后一条消息的偏移量+1
+   * 使用方需要获取日志"最近偏移量"时，就不需要再做+1的操作
+   * @param messageOffset
+   */
   private def updateLogEndOffset(messageOffset: Long) {
     nextOffsetMetadata = new LogOffsetMetadata(messageOffset, activeSegment.baseOffset, activeSegment.size.toInt)
   }
@@ -374,6 +384,7 @@ class Log(@volatile var dir: File,
           // assign offsets to the message set
           // todo 步骤二  分配offset
           val offset = new LongRef(nextOffsetMetadata.messageOffset)
+          // 获取最新的"下一个偏移量"作为第一条消息的绝对偏移量
           appendInfo.firstOffset = offset.value
           val now = time.milliseconds
           val validateAndOffsetAssignResult = try {
@@ -449,7 +460,7 @@ class Log(@volatile var dir: File,
         // todo 步骤七  根据条件判断 把内存里面的数据写到磁盘
         // 假设我们配置的10分钟刷写磁盘
         // LogManager -> startup -> 操作系统里面的机制
-
+        // unflushedMessages 未刷新消息数量的计算方式是：最新偏移量-上次的检查点位置
         if (unflushedMessages >= config.flushInterval)
           /**
            * flushInterval 默认是long型最大值，所以基本不会执行这个操作
@@ -483,22 +494,25 @@ class Log(@volatile var dir: File,
    * </ol>
    */
   private def analyzeAndValidateRecords(records: MemoryRecords): LogAppendInfo = {
-    var shallowMessageCount = 0
-    var validBytesCount = 0
+    var shallowMessageCount = 0 // 消息数量
+    var validBytesCount = 0 // 有效字节数
+    // 第一条消息和最后一条（循环时表示上一条消息的偏移量）消息的偏移量
     var firstOffset = -1L
     var lastOffset = -1L
     var sourceCodec: CompressionCodec = NoCompressionCodec
-    var monotonic = true
+    var monotonic = true  // 是否单调递增
     var maxTimestamp = Record.NO_TIMESTAMP
     var offsetOfMaxTimestamp = -1L
     for (entry <- records.shallowEntries.asScala) {
       // update the first offset if on the first message
+      // 在第一条消息中更新firstOffset
       if(firstOffset < 0)
         firstOffset = entry.offset
       // check that offsets are monotonically increasing
       if(lastOffset >= entry.offset)
         monotonic = false
       // update the last offset seen
+      // 每循环一条消息，就更新lastOffset
       lastOffset = entry.offset
 
       val record = entry.record
@@ -513,6 +527,7 @@ class Log(@volatile var dir: File,
       }
 
       // check the validity of the message by checking CRC
+      // 检查消息是否有效
       record.ensureValid()
       if (record.timestamp > maxTimestamp) {
         maxTimestamp = record.timestamp
@@ -557,9 +572,9 @@ class Log(@volatile var dir: File,
   /**
    * Read messages from the log.
    *
-   * @param startOffset The offset to begin reading at
-   * @param maxLength The maximum number of bytes to read
-   * @param maxOffset The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set)
+   * @param startOffset The offset to begin reading at 从指定的起始偏移量读取日志
+   * @param maxLength The maximum number of bytes to read fetchSize 默认值是1M
+   * @param maxOffset The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set) 最大偏移量
    * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxLength` (if one exists)
    *
    * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the base offset of the first segment.
@@ -574,7 +589,7 @@ class Log(@volatile var dir: File,
     val next = currentNextOffsetMetadata.messageOffset
     if(startOffset == next)
       return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY)
-    // 获取对应的segment对象
+    // 获取对应的segment对象，先找日志分段
     var entry = segments.floorEntry(startOffset)
 
     // attempt to read beyond the log end offset is an error
@@ -605,6 +620,7 @@ class Log(@volatile var dir: File,
       // todo 核心代码 通过segment去读取上面的数据
       val fetchInfo = entry.getValue.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
       if(fetchInfo == null) {
+        // 如果日志分段没有读到数据，会去读取更高的分段
         entry = segments.higherEntry(entry.getKey)
       } else {
         return fetchInfo
@@ -692,6 +708,7 @@ class Log(@volatile var dir: File,
         if (segments.size == numToDelete)
           roll()
         // remove the segments for lookups
+        // deleteSegment 方法
         deletable.foreach(deleteSegment)
       }
       numToDelete
@@ -760,6 +777,7 @@ class Log(@volatile var dir: File,
 
   /**
    *  The offset of the next message that will be appended to the log
+   *  下一条消息的偏移量，取自"下一条偏移量元数据"中的第一个字段值
    */
   def logEndOffset: Long = nextOffsetMetadata.messageOffset
 
@@ -818,6 +836,7 @@ class Log(@volatile var dir: File,
    * This will trim the index to the exact size of the number of entries it currently contains.
    *
    * @return The newly rolled segment
+   * 创建新的日志分段，并将其添加到日志管理额segment字典中
    */
   def roll(expectedNextOffset: Long = 0): LogSegment = {
     val start = time.nanoseconds
@@ -868,10 +887,11 @@ class Log(@volatile var dir: File,
       // The next offset should not change.
       updateLogEndOffset(nextOffsetMetadata.messageOffset)
       // schedule an asynchronous flush of the old segment
+      // 立即启动定时刷写任务
       scheduler.schedule("flush-log", () => flush(newOffset), delay = 0L)
 
       info("Rolled new log segment for '" + name + "' in %.0f ms.".format((System.nanoTime - start) / (1000.0*1000.0)))
-
+      // 返回值是新创建的日志分段
       segment
     }
   }
@@ -883,6 +903,7 @@ class Log(@volatile var dir: File,
 
   /**
    * Flush all log segments
+   * 获取最近的偏移量，刷新上一次检查点到最近偏移量之间的所有日志分段
    */
   def flush(): Unit = flush(this.logEndOffset)
 
@@ -898,11 +919,12 @@ class Log(@volatile var dir: File,
           time.milliseconds + " unflushed = " + unflushedMessages)
     // 遍历所有当前主机的所有的segment
     for(segment <- logSegments(this.recoveryPoint, offset))
-      // 调用flush方法
+      // 调用flush方法，刷新数据文件和索引文件（调用操作系统的fsync）
       segment.flush()
     lock synchronized {
       if(offset > this.recoveryPoint) {
         this.recoveryPoint = offset
+        // 更新最近的刷新时间
         lastflushedTime.set(time.milliseconds)
       }
     }
@@ -976,6 +998,7 @@ class Log(@volatile var dir: File,
 
   /**
    * The active segment that is currently taking appends
+   * 任何时刻，只会有一个活动的日志分段
    */
   def activeSegment = segments.lastEntry.getValue
 
@@ -1015,7 +1038,9 @@ class Log(@volatile var dir: File,
   private def deleteSegment(segment: LogSegment) {
     info("Scheduling log segment %d for log %s for deletion.".format(segment.baseOffset, name))
     lock synchronized {
+      // 从映射关系表中删除数据
       segments.remove(segment.baseOffset)
+      // 异步删除日志分段
       asyncDeleteSegment(segment)
     }
   }
@@ -1092,6 +1117,7 @@ class Log(@volatile var dir: File,
    * Add the given segment to the segments in this log. If this segment replaces an existing segment, delete it.
    *
    * @param segment The segment to add
+   * 添加日志分段到日志中
    */
   def addSegment(segment: LogSegment) = this.segments.put(segment.baseOffset, segment)
 

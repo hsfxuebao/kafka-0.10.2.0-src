@@ -41,6 +41,7 @@ import org.apache.kafka.common.utils.Time
  * 
  * A background thread handles log retention by periodically truncating excess log segments.
  */
+// log.dirs 数据目录 logDirs日志目录
 @threadsafe
 class LogManager(val logDirs: Array[File],
                  val topicConfigs: Map[String, LogConfig],
@@ -65,8 +66,9 @@ class LogManager(val logDirs: Array[File],
   // todo 这个代码肯定被执行
   createAndValidateLogDirs(logDirs)
   private val dirLocks = lockLogDirs(logDirs)
+  // 每个数据目录都有一个检查点文件，存储这个数据目录下所有分区的检查点信息
   private val recoveryPointCheckpoints = logDirs.map(dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
-  // todo 这个代码肯定被执行
+  // todo 这个代码肯定被执行 创建日志管理类，就会立即调用该方法，加载所有的日志
   loadLogs()
 
   // public, so we can access this from kafka.admin.DeleteTopicTest
@@ -170,7 +172,7 @@ class LogManager(val logDirs: Array[File],
           if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
             this.logsToBeDeleted.add(current)
           } else {
-            // todo 把Log对象放入到logs里面
+            // todo 把Log对象放入到logs里面，日志管理的映射表
             val previous = this.logs.put(topicPartition, current)
             if (previous != null) {
               throw new IllegalArgumentException(
@@ -180,7 +182,7 @@ class LogManager(val logDirs: Array[File],
           }
         }
       }
-
+      // 提交任务
       jobs(cleanShutdownFile) = jobsForDir.map(pool.submit).toSeq
     }
 
@@ -354,6 +356,7 @@ class LogManager(val logDirs: Array[File],
   /**
    * Write out the current recovery point for all logs to a text file in the log directory 
    * to avoid recovering the whole log on startup.
+   * 通常所有数据目录都会一起执行，不会专门操作某一个数据目录的检查点文件
    */
   def checkpointRecoveryPointOffsets() {
     this.logDirs.foreach(checkpointLogsInDir)
@@ -361,6 +364,7 @@ class LogManager(val logDirs: Array[File],
 
   /**
    * Make a checkpoint for all logs in provided directory.
+   * 对数据目录下的所有日志（即所有分区），将其检查点写入到检查点文件
    */
   private def checkpointLogsInDir(dir: File): Unit = {
     val recoveryPoints = this.logsByDir.get(dir.toString)
@@ -377,13 +381,16 @@ class LogManager(val logDirs: Array[File],
   /**
    * Create a log for the given topic and the given partition
    * If the log already exists, just return a copy of the existing log
+   * 根据分区编号创建一个日志实例，并加入映射关系中
    */
   def createLog(topicPartition: TopicPartition, config: LogConfig): Log = {
     logCreationOrDeletionLock synchronized {
       // create the log if it has not already been created in another thread
       getLog(topicPartition).getOrElse {
+        // 选择一个数据目录存储日志
         val dataDir = nextLogDir()
         val dir = new File(dataDir, topicPartition.topic + "-" + topicPartition.partition)
+        // 日志目录的名称由主题和分区组成
         dir.mkdirs()
         val log = new Log(dir, config, recoveryPoint = 0L, scheduler, time)
         logs.put(topicPartition, log)
@@ -487,6 +494,7 @@ class LogManager(val logDirs: Array[File],
   /**
    * Delete any eligible logs. Return the number of segments deleted.
    * Only consider logs that are not compacted.
+   * 日志管理器的日志清理任务
    */
   def cleanupLogs() {
     debug("Beginning log cleanup...")
@@ -514,6 +522,7 @@ class LogManager(val logDirs: Array[File],
 
   /**
    * Map of log dir to logs by topic and partitions in that dir
+   * 根据数据目录对所有日志分组
    */
   private def logsByDir = {
     this.logsByTopicPartition.groupBy {
@@ -523,6 +532,7 @@ class LogManager(val logDirs: Array[File],
 
   /**
    * Flush any log which has exceeded its flush interval and has unwritten messages.
+   * 日志管理器在启动时，会启动一个定时刷写所有日志的任务
    */
   private def flushDirtyLogs() = {
     debug("Checking for dirty logs to flush...")
@@ -530,6 +540,7 @@ class LogManager(val logDirs: Array[File],
     // 遍历所有log
     for ((topicPartition, log) <- logs) {
       try {
+        // 虽然是定时的，但是每个日志的最近刷新时间不同，下一次刷新的时间也不同
         val timeSinceLastFlush = time.milliseconds - log.lastFlushTime
         debug("Checking if flush is needed on " + topicPartition.topic + " flush interval  " + log.config.flushMs +
               " last flushed " + log.lastFlushTime + " time since last flush: " + timeSinceLastFlush)

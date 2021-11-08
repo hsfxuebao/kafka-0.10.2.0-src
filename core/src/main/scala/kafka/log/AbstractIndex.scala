@@ -243,16 +243,19 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
    * @param target The index key to look for
    * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
    */
+    // 找到小于等于目标偏移量的最大偏移量
   protected def indexSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int = {
     // check if the index is empty
+      // 检查索引文件有没有条目
     if(_entries == 0)
       return -1
 
     // check if the target offset is smaller than the least offset
+      // 如果索引条目最小的偏移量都比目标偏移量要大，说明不在这个索引文件里
     if(compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
       return -1
 
-    // binary search for the entry
+    // binary search for the entry 二分查找的一个前提是数组有序，而在写入索引条目时已经保证了有序
     var lo = 0
     var hi = _entries - 1
     while(lo < hi) {
@@ -266,7 +269,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
       else
         return mid
     }
-    lo
+    lo // 没有找到，返回小于目标偏移量的最大偏移量
   }
 
   private def compareIndexEntry(indexEntry: IndexEntry, target: Long, searchEntity: IndexSearchEntity): Int = {

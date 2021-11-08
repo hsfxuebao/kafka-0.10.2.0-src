@@ -84,17 +84,20 @@ private[log] class LogCleanerManager(val logDirs: Array[File], val logs: Pool[To
     * Choose the log to clean next and add it to the in-progress set. We recompute this
     * each time from the full set of logs to allow logs to be dynamically added to the pool of logs
     * the log manager maintains.
+    * 日志清理器选择最需要清理的一个日志，选择cleanableRatio比率最大的那个日志
     */
   def grabFilthiestCompactedLog(time: Time): Option[LogToClean] = {
     inLock(lock) {
       val now = time.milliseconds
       this.timeOfLastRun = now
+      // 读取记录了清理点的检查点文件
       val lastClean = allCleanerCheckpoints
-      val dirtyLogs = logs.filter {
+      val dirtyLogs = logs.filter { // 清理策略是去重，而不是删除
         case (_, log) => log.config.compact  // match logs that are marked as compacted
-      }.filterNot {
+      }.filterNot { // 如果正在清理，就跳过
         case (topicPartition, _) => inProgress.contains(topicPartition) // skip any logs already in-progress
       }.map {
+            // 为每个日志创建一个LogToClean对象
         case (topicPartition, log) => // create a LogToClean instance for each
           val (firstDirtyOffset, firstUncleanableDirtyOffset) = LogCleanerManager.cleanableOffsets(log, topicPartition,
             lastClean, now)
@@ -103,11 +106,12 @@ private[log] class LogCleanerManager(val logDirs: Array[File], val logs: Pool[To
 
       this.dirtiestLogCleanableRatio = if (dirtyLogs.nonEmpty) dirtyLogs.max.cleanableRatio else 0
       // and must meet the minimum threshold for dirty byte ratio
+      // 必须满足最小阈值
       val cleanableLogs = dirtyLogs.filter(ltc => ltc.cleanableRatio > ltc.log.config.minCleanableRatio)
       if(cleanableLogs.isEmpty) {
         None
       } else {
-        val filthiest = cleanableLogs.max
+        val filthiest = cleanableLogs.max // 最终选择一个待清理的日志
         inProgress.put(filthiest.topicPartition, LogCleaningInProgress)
         Some(filthiest)
       }
@@ -281,6 +285,7 @@ private[log] object LogCleanerManager extends Logging {
 
     // If the log segments are abnormally truncated and hence the checkpointed offset is no longer valid;
     // reset to the log starting offset and log the error
+    // 如果日志分段被异常截断，检查点无效，需要重置到第一个日志分段的基准偏移量
     val logStartOffset = log.logSegments.head.baseOffset
     val firstDirtyOffset = {
       val offset = lastCleanOffset.getOrElse(logStartOffset)

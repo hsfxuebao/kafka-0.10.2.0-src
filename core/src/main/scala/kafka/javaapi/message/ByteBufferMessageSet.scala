@@ -23,9 +23,11 @@ import kafka.message._
 
 import scala.collection.JavaConverters._
 
+// Java版本的生产者客户端传递的消息内容是ByteBuffer，无需额外处理
 class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet {
   private val underlying: kafka.message.ByteBufferMessageSet = new kafka.message.ByteBufferMessageSet(buffer)
-  
+
+  // Scala版本的客户端传递Message对象，要将消息集填充到字节缓存区中
   def this(compressionCodec: CompressionCodec, messages: java.util.List[Message]) {
     this(new kafka.message.ByteBufferMessageSet(compressionCodec, new LongRef(0), messages.asScala: _*).buffer)
   }

@@ -266,10 +266,11 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * and return its physical position and the size of the message (including log overhead) at the returned offset. If
      * no such offsets are found, return null.
      *
-     * @param targetOffset The offset to search for.
-     * @param startingPosition The starting position in the file to begin searching from.
+     * @param targetOffset The offset to search for. 目标偏移量
+     * @param startingPosition The starting position in the file to begin searching from. 起始位置
      */
     public LogEntryPosition searchForOffsetWithSize(long targetOffset, int startingPosition) {
+        // 从起始位置搜索数据文件，找到偏移量等于目标偏移量的消息
         for (FileChannelLogEntry entry : shallowEntriesFrom(startingPosition)) {
             long offset = entry.offset();
             if (offset >= targetOffset)

@@ -126,6 +126,7 @@ private class OffsetAssigner(offsets: Seq[Long]) {
  * 4. This solution works for compacted message sets as well.
  *
  */
+// 基于字节缓冲区的消息集
 class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Logging {
 
   private[kafka] def this(compressionCodec: CompressionCodec,
