@@ -41,7 +41,7 @@ import org.apache.kafka.common.utils.Time
  * 
  * A background thread handles log retention by periodically truncating excess log segments.
  */
-// log.dirs 数据目录 logDirs日志目录
+// log.dirs 数据目录 logDirs日志目录 日志管理器
 @threadsafe
 class LogManager(val logDirs: Array[File],
                  val topicConfigs: Map[String, LogConfig],

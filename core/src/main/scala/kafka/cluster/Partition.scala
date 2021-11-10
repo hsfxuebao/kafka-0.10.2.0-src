@@ -490,8 +490,10 @@ class Partition(val topic: String,
           // 看看组件初始化的方法
           val info = log.append(records, assignOffsets = true)
           // probably unblock some follower fetch requests since log end offset has been updated
+          // 尝试完成被延迟的拉取请求（这个拉取请求来自备份副本）
           replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))
           // we may need to increment high watermark since ISR could be down to 1
+          // 如果分区的最高水位发生变化
           (info, maybeIncrementLeaderHW(leaderReplica))
 
         case None =>
@@ -501,6 +503,8 @@ class Partition(val topic: String,
     }
 
     // some delayed operations may be unblocked after HW changed
+    // 如果分区的最高水位发生变化，尝试完成被延迟的生产请求和拉取请求
+    // 这里被延迟的拉取请求来自消费者客户端，而不是备份副本
     if (leaderHWIncremented)
       tryCompleteDelayedRequests()
 

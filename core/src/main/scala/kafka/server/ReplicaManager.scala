@@ -112,6 +112,7 @@ object ReplicaManager {
  * @param isShuttingDown
  * @param quotaManager
  * @param threadNamePrefix
+ * 副本管理器，管理消息代理节点的所有分区
  */
 class ReplicaManager(val config: KafkaConfig,
                      metrics: Metrics,
@@ -287,6 +288,7 @@ class ReplicaManager(val config: KafkaConfig,
   def getOrCreatePartition(topicPartition: TopicPartition): Partition =
     allPartitions.getAndMaybePut(topicPartition)
 
+  // allPartitions 保存当前消息代理节点管理的所有分区
   def getPartition(topicPartition: TopicPartition): Option[Partition] =
     Option(allPartitions.get(topicPartition))
 
@@ -316,6 +318,7 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Append messages to leader replicas of the partition, and wait for them to be replicated to other replicas;
    * the callback function will be triggered either when timeout or the required acks are satisfied
+   * 追加消息到主副本，并等待它们完全复制到其他备份副本上，才返回生产结果给客户端
    */
   def appendRecords(timeout: Long,
                     requiredAcks: Short,
@@ -327,7 +330,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (isValidRequiredAcks(requiredAcks)) {
       val sTime = time.milliseconds
       // todo 把数据追加到本地日志里面
-      // localProduceResults 是服务端写完消息以后的处理结果
+      // localProduceResults 是服务端写完消息以后的处理结果 追加消息到本地日志
       val localProduceResults = appendToLocalLog(internalTopicsAllowed, entriesPerPartition, requiredAcks)
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
 
@@ -379,12 +382,13 @@ class ReplicaManager(val config: KafkaConfig,
   // 1. required acks = -1
   // 2. there is data to append
   // 3. at least one partition append was successful (fewer errors than partitions)
-  // ack = -1
+  // ack = -1 判断是否需要延迟返回生产者响应结果
   private def delayedRequestRequired(requiredAcks: Short,
                                      entriesPerPartition: Map[TopicPartition, MemoryRecords],
                                      localProduceResults: Map[TopicPartition, LogAppendResult]): Boolean = {
-    requiredAcks == -1 &&
-    entriesPerPartition.nonEmpty &&
+    requiredAcks == -1 && // 生产者客户端设置需要等待应答
+    entriesPerPartition.nonEmpty && // 客户端有发送消息
+    // 追加消息到分区，必须保证至少一个分区写入成功，如果所有分区都失败，立即返回
     localProduceResults.values.count(_.exception.isDefined) < entriesPerPartition.size
   }
 
@@ -394,6 +398,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   /**
    * Append the messages to the local replica logs
+   * 将分区的消息集写入对应的本地日志文件
    */
   private def appendToLocalLog(internalTopicsAllowed: Boolean,
                                entriesPerPartition: Map[TopicPartition, MemoryRecords],
@@ -469,6 +474,7 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Fetch messages from the leader replica, and wait until enough data can be fetched and return;
    * the callback function will be triggered either when timeout or required fetch info is satisfied
+   * 向主副本拉取消息，并等待收集到足够的数据后，才会返回拉取结果给客户端
    */
   def fetchMessages(timeout: Long,
                     replicaId: Int,
@@ -478,8 +484,10 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicPartition, PartitionData)],
                     quota: ReplicaQuota = UnboundedQuota,
                     responseCallback: Seq[(TopicPartition, FetchPartitionData)] => Unit) {
+    // 拉取数据是否来自备份副本
     val isFromFollower = replicaId >= 0
     val fetchOnlyFromLeader: Boolean = replicaId != Request.DebuggingConsumerId
+    // 拉取请求来自消费者，只能拉取已提交的，拉取请求来自备份副本，没有拉取的限制
     val fetchOnlyCommitted: Boolean = ! Request.isValidBrokerId(replicaId)
 
     // read from local logs
@@ -495,8 +503,10 @@ class ReplicaManager(val config: KafkaConfig,
 
     // if the fetch comes from the follower,
     // update its corresponding log end offset
+    // 备份副本的拉取请求，更新对应的日志结束偏移量
     if(Request.isValidBrokerId(replicaId))
       // todo leader partition 这维护了这个partition的所有replica的LEO值
+      // 尝试完成被延迟的生产请求
       updateFollowerLogReadResults(replicaId, logReadResults)
 
     // check if this fetch request can be satisfied right away
@@ -530,6 +540,7 @@ class ReplicaManager(val config: KafkaConfig,
         }.getOrElse(sys.error(s"Partition $topicPartition not found in fetchInfos"))
         (topicPartition, FetchPartitionStatus(result.info.fetchOffsetMetadata, fetchInfo))
       }
+      // 延迟拉取对象DelayFetch 需要拉取请求相关的元数据FetchMetadata
       val fetchMetadata = FetchMetadata(fetchMinBytes, fetchMaxBytes, hardMaxBytesLimit, fetchOnlyFromLeader,
         fetchOnlyCommitted, isFromFollower, replicaId, fetchPartitionStatus)
       // 封装了一个延迟调度的任务
@@ -549,6 +560,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   /**
    * Read from multiple topic partitions at the given offset up to maxSize bytes
+   * 从分区对应的本地日志文件读取消息
    */
   def readFromLocalLog(replicaId: Int,
                        fetchOnlyFromLeader: Boolean,
@@ -598,7 +610,7 @@ class ReplicaManager(val config: KafkaConfig,
             val adjustedFetchSize = math.min(partitionFetchSize, limitBytes)
 
             // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
-            // log对象去读取
+            // log对象去读取 从分区日志文件的指定位置开始读取消息，最多读取adjustedFetchSize
             val fetch = log.read(offset, adjustedFetchSize, maxOffsetOpt, minOneMessage)
 
             // If the partition is being throttled, simply return an empty set.

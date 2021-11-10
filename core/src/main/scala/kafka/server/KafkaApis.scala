@@ -52,11 +52,11 @@ import scala.collection.JavaConverters._
 /**
  * Logic to handle the various Kafka requests
  */
-class KafkaApis(val requestChannel: RequestChannel,
-                val replicaManager: ReplicaManager,
+class KafkaApis(val requestChannel: RequestChannel, // 请求通道
+                val replicaManager: ReplicaManager, // 副本管理器
                 val adminManager: AdminManager,
-                val coordinator: GroupCoordinator,
-                val controller: KafkaController,
+                val coordinator: GroupCoordinator,  // 协调者
+                val controller: KafkaController,  // 控制器
                 val zkUtils: ZkUtils,
                 val brokerId: Int,
                 val config: KafkaConfig,
@@ -71,6 +71,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   /**
    * Top-level method that handles all requests and multiplexes to the right api
+   * 服务端处理客户端发送的各种请求
    */
   def handle(request: RequestChannel.Request) {
     try {
@@ -465,12 +466,12 @@ class KafkaApis(val requestChannel: RequestChannel,
        * 大家目前只需要知道，我们的代码走到这
        * 最终数据就会被写到磁盘上面
         */
-      replicaManager.appendRecords(
-        produceRequest.timeout.toLong,
-        produceRequest.acks,
+      replicaManager.appendRecords( // 调用副本管理器追加消息到副本的日志中
+        produceRequest.timeout.toLong,  // 生产请求设置的应答超时时间
+        produceRequest.acks,  // ack机制
         internalTopicsAllowed,
         authorizedRequestInfo,
-        sendResponseCallback)
+        sendResponseCallback) // 回调函数
 
       // if the request is put into the purgatory, it will have a held reference
       // and hence cannot be garbage collected; hence we clear its data here in
@@ -481,6 +482,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   /**
    * Handle a fetch request
+   * 服务端处理消费者客户端或者备份副本发送的拉取请求
    */
   def handleFetchRequest(request: RequestChannel.Request) {
     // 获取到请求
@@ -572,15 +574,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       sendResponseCallback(Seq.empty)
     else {
       // call the replica manager to fetch messages from the local replica
-      replicaManager.fetchMessages(
-        fetchRequest.maxWait.toLong,
-        fetchRequest.replicaId,
-        fetchRequest.minBytes,
+      replicaManager.fetchMessages( // 调用副本管理器从本地副本中拉取消息
+        fetchRequest.maxWait.toLong,  // 拉取请求设置的最长等待时间
+        fetchRequest.replicaId, // 备份副本编号，消费者没有该编号
+        fetchRequest.minBytes,   // 最小拉取字节
         fetchRequest.maxBytes,
         versionId <= 2,
         authorizedRequestInfo,
         replicationQuota(fetchRequest),
-        sendResponseCallback)
+        sendResponseCallback) // 回调函数
     }
   }
 
