@@ -25,12 +25,14 @@ import java.util.concurrent.atomic.AtomicLong
 
 import org.apache.kafka.common.utils.Time
 
+// 副本对象有两个重要的元数据，最高水位元数据和偏移量元数据
 class Replica(val brokerId: Int,
               val partition: Partition,
               time: Time = Time.SYSTEM,
               initialHighWatermarkValue: Long = 0L,
               val log: Option[Log] = None) extends Logging {
   // the high watermark offset value, in non-leader replicas only its message offsets are kept
+  // 最高水位数据、偏移量数据都是原子类型的变量，类似日志的nextOffsetMetadata
   @volatile private[this] var highWatermarkMetadata = new LogOffsetMetadata(initialHighWatermarkValue)
   // the log end offset value, kept in all replicas;
   // for local replica it is the log's end offset, for remote replicas its value is only updated by follower fetch
@@ -66,6 +68,7 @@ class Replica(val brokerId: Int,
    * fetch request is always smaller than the leader's LEO, which can happen if small produce requests are received at
    * high frequency.
    */
+  // 更新日志的读取结果，一般针对远程副本
   def updateLogReadResult(logReadResult : LogReadResult) {
     if (logReadResult.info.fetchOffsetMetadata.messageOffset >= logReadResult.leaderLogEndOffset)
       _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, logReadResult.fetchTimeMs)
@@ -84,6 +87,7 @@ class Replica(val brokerId: Int,
     _lastCaughtUpTimeMs = lastCaughtUpTimeMs
   }
 
+  // 更新副本的偏移量元数据，只有远程副本可以更新
   private def logEndOffset_=(newLogEndOffset: LogOffsetMetadata) {
     if (isLocal) {
       throw new KafkaException(s"Should not set log end offset on partition $topicPartition's local replica $brokerId")
@@ -92,13 +96,14 @@ class Replica(val brokerId: Int,
       trace(s"Setting log end offset for replica $brokerId for partition $topicPartition to [$logEndOffsetMetadata]")
     }
   }
-
+  // 获取副本的偏移量元数据，本地副本通过读取日志文件获取
   def logEndOffset =
     if (isLocal)
       log.get.logEndOffsetMetadata
     else
       logEndOffsetMetadata
 
+  // 设置副本的最高水位线，只有本地副本可以更新
   def highWatermark_=(newHighWatermark: LogOffsetMetadata) {
     if (isLocal) {
       highWatermarkMetadata = newHighWatermark
@@ -107,9 +112,10 @@ class Replica(val brokerId: Int,
       throw new KafkaException(s"Should not set high watermark on partition $topicPartition's non-local replica $brokerId")
     }
   }
-
+  // 获取本地副本的最高水位线
   def highWatermark = highWatermarkMetadata
 
+  // 以最新的HW的offset读取Log
   def convertHWToLocalOffsetMetadata() = {
     if (isLocal) {
       highWatermarkMetadata = log.get.convertToOffsetMetadata(highWatermarkMetadata.messageOffset)

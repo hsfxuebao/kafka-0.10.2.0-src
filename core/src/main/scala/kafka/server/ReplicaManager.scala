@@ -981,6 +981,7 @@ class ReplicaManager(val config: KafkaConfig,
     allPartitions.values.foreach(partition => partition.maybeShrinkIsr(config.replicaLagTimeMaxMs))
   }
 
+  // 更新备份副本的偏移量
   private def updateFollowerLogReadResults(replicaId: Int, readResults: Seq[(TopicPartition, LogReadResult)]) {
     debug("Recording follower broker %d log read results: %s ".format(replicaId, readResults))
     readResults.foreach { case (topicPartition, readResult) =>
@@ -1009,10 +1010,13 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   // Flushes the highwatermark value for all partitions to the highwatermark file
+  // 副本管理器刷写最高水位到检查点文件
   def checkpointHighWatermarks() {
+    // 获取所有分区对应的本地副本，使用 flatMap 是因为 getReplica 返回的是 Option
     val replicas = allPartitions.values.flatMap(_.getReplica(localBrokerId))
     val replicasByDir = replicas.filter(_.log.isDefined).groupBy(_.log.get.dir.getParentFile.getAbsolutePath)
     for ((dir, reps) <- replicasByDir) {
+      // 每个分区的日志目录对应的都是本地副本
       val hwms = reps.map(r => r.partition.topicPartition -> r.highWatermark.messageOffset).toMap
       try {
         highWatermarkCheckpoints(dir).write(hwms)

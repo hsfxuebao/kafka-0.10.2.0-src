@@ -40,6 +40,7 @@ import org.apache.kafka.common.utils.Time
 
 /**
  * Data structure that represents a topic partition. The leader maintains the AR, ISR, CUR, RAR
+ * 分区是一个有状态的数据结构，它保存了所有的副本（AR）,主副本
  */
 class Partition(val topic: String,
                 val partitionId: Int,
@@ -67,6 +68,7 @@ class Partition(val topic: String,
   private var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
   this.logIdent = "Partition [%s,%d] on broker %d: ".format(topic, partitionId, localBrokerId)
 
+  // 根据指定的副本编号，判断它是不是本地副本
   private def isReplicaLocal(replicaId: Int) : Boolean = replicaId == localBrokerId
   val tags = Map("topic" -> topic, "partition" -> partitionId.toString)
 
@@ -99,27 +101,33 @@ class Partition(val topic: String,
 
   private def isLeaderReplicaLocal: Boolean = leaderReplicaIfLocal.isDefined
 
+  // 验证分区
   def isUnderReplicated: Boolean =
     isLeaderReplicaLocal && inSyncReplicas.size < assignedReplicas.size
 
+  // 分区Partition根据给定的副本编号创建副本Replica
   def getOrCreateReplica(replicaId: Int = localBrokerId): Replica = {
     assignedReplicaMap.getAndMaybePut(replicaId, {
+      // 本地副本，需要创建物理层日志
       if (isReplicaLocal(replicaId)) {
         val config = LogConfig.fromProps(logManager.defaultConfig.originals,
                                          AdminUtils.fetchEntityConfig(zkUtils, ConfigType.Topic, topic))
         val log = logManager.createLog(topicPartition, config)
+        // log.dir表示分区对应的日志目录，log.dir.parent表示分区上层的数据目录
+        // kafka客户端可以设置多个数据目录，每个数据目录都有检查点文件
         val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParentFile.getAbsolutePath)
         val offsetMap = checkpoint.read
         if (!offsetMap.contains(topicPartition))
           info(s"No checkpointed highwatermark is found for partition $topicPartition")
         val offset = math.min(offsetMap.getOrElse(topicPartition, 0L), log.logEndOffset)
         new Replica(replicaId, this, time, offset, Some(log))
-      } else new Replica(replicaId, this, time)
+      } else new Replica(replicaId, this, time) // 远程副本不需要创建物理层日志
     })
   }
-
+  // 获取分区指定编号的副本，默认获取的是当前代理节点对应编号的副本
   def getReplica(replicaId: Int = localBrokerId): Option[Replica] = Option(assignedReplicaMap.get(replicaId))
 
+  // 获取分区的主副本，并且必须是本地副本，如果不是本地副本，返回non
   def leaderReplicaIfLocal: Option[Replica] =
     leaderReplicaIdOpt.filter(_ == localBrokerId).flatMap(getReplica)
 
@@ -157,6 +165,7 @@ class Partition(val topic: String,
    * from the time when this broker was the leader last time) and setting the new leader and ISR.
    * If the leader replica id does not change, return false to indicate the replica manager.
    */
+    // 改变主副本，也可能改变ISR
   def makeLeader(controllerId: Int, partitionStateInfo: PartitionState, correlationId: Int): Boolean = {
     val (leaderHWIncremented, isNewLeader) = inWriteLock(leaderIsrUpdateLock) {
       val allReplicas = partitionStateInfo.replicas.asScala.map(_.toInt)
@@ -193,6 +202,7 @@ class Partition(val topic: String,
         // reset log end offset for remote replicas
         assignedReplicas.filter(_.brokerId != localBrokerId).foreach(_.updateLogReadResult(LogReadResult.UnknownLogReadResult))
       }
+      // 更新HW
       (maybeIncrementLeaderHW(leaderReplica), isNewLeader)
     }
     // some delayed operations may be unblocked after HW changed
@@ -240,7 +250,7 @@ class Partition(val topic: String,
         replica.updateLogReadResult(logReadResult)
         // check if we need to expand ISR to include this replica
         // if it is not in the ISR yet
-        // 尝试修改ISR列表
+        // 尝试修改ISR列表(检查是否需要将备份副本添加到分区的ISR中)
         maybeExpandIsr(replicaId, logReadResult)
 
         debug("Recorded replica %d log end offset (LEO) position %d for partition %s."
@@ -266,12 +276,14 @@ class Partition(val topic: String,
    *
    * This function can be triggered when a replica's LEO has incremented
    */
+    // 增加ISR
   def maybeExpandIsr(replicaId: Int, logReadResult: LogReadResult) {
     val leaderHWIncremented = inWriteLock(leaderIsrUpdateLock) {
       // check if this replica needs to be added to the ISR
       leaderReplicaIfLocal match {
+          // 主副本接收到备份副本的拉取请求，正常情况下一定存在本地的主副本
         case Some(leaderReplica) =>
-          // 获取到所有的replica
+          // 获取指定的备份副本replica
           val replica = getReplica(replicaId).get
           // 获取到leader partition 的HW的值
           val leaderHW = leaderReplica.highWatermark
@@ -297,7 +309,7 @@ class Partition(val topic: String,
 
           // check if the HW of the partition can now be incremented
           // since the replica may already be in the ISR and its LEO has just incremented
-          // todo 尝试更新HW值 min(p0,p1,p2)
+          // todo 尝试更新HW值 min(p0,p1,p2)，ISR变化，增加leader的HW
           maybeIncrementLeaderHW(leaderReplica, logReadResult.fetchTimeMs)
 
         case None => false // nothing to do if no longer leader
@@ -305,6 +317,7 @@ class Partition(val topic: String,
     }
 
     // some delayed operations may be unblocked after HW changed
+      // 如果分区对应的主副本的最高水位有增加，尝试完成延迟的请求（延迟的生产和延时的拉取）
     if (leaderHWIncremented)
       tryCompleteDelayedRequests()
   }
@@ -406,6 +419,7 @@ class Partition(val topic: String,
     replicaManager.tryCompleteDelayedProduce(requestKey)
   }
 
+  // 减少ISR
   def maybeShrinkIsr(replicaMaxLagTimeMs: Long) {
     val leaderHWIncremented = inWriteLock(leaderIsrUpdateLock) {
       leaderReplicaIfLocal match {

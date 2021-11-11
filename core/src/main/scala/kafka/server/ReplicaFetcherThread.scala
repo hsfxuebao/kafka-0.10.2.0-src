@@ -113,6 +113,7 @@ class ReplicaFetcherThread(name: String,
   }
 
   // process fetched data
+  // 备份副本的拉取线程处理每个分区的拉取数据，追加消息集到本地日志，并且更新最高水位
   def processPartitionData(topicPartition: TopicPartition, fetchOffset: Long, partitionData: PartitionData) {
     try {
       val replica = replicaMgr.getReplica(topicPartition).get
@@ -126,7 +127,7 @@ class ReplicaFetcherThread(name: String,
         trace("Follower %d has replica log end offset %d for partition %s. Received %d messages and leader hw %d"
           .format(replica.brokerId, replica.logEndOffset.messageOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
       // todo 调用leader partition 一样的代码
-      // 同时更新LEO的值
+      // 同时更新LEO的值 更新日志的LEO
       replica.log.get.append(records, assignOffsets = false)
       if (logger.isTraceEnabled)
         trace("Follower %d has replica log end offset %d after appending %d bytes of messages for partition %s"
@@ -139,7 +140,7 @@ class ReplicaFetcherThread(name: String,
       // for the follower replica, we do not need to keep
       // its segment base offset the physical position,
       // these values will be computed upon making the leader
-      // 修改自己的HW的值
+      // 修改自己的HW的值 更新备份副本的HW
       replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
       if (logger.isTraceEnabled)
         trace(s"Follower ${replica.brokerId} set replica high watermark for partition $topicPartition to $followerHighWatermark")

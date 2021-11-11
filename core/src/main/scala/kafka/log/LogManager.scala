@@ -359,6 +359,7 @@ class LogManager(val logDirs: Array[File],
    * 通常所有数据目录都会一起执行，不会专门操作某一个数据目录的检查点文件
    */
   def checkpointRecoveryPointOffsets() {
+    // 数据目录下每个分区对应一个日志目录
     this.logDirs.foreach(checkpointLogsInDir)
   }
 
