@@ -330,12 +330,13 @@ class Partition(val topic: String,
    * fully caught up to the (local) leader's offset corresponding to this produce request before we acknowledge the
    * produce request.
    */
+  // 检查分区是否有足够的副本赶上指定偏移量
   def checkEnoughReplicasReachOffset(requiredOffset: Long): (Boolean, Errors) = {
     leaderReplicaIfLocal match {
       case Some(leaderReplica) =>
         // keep the current immutable replica list reference
         val curInSyncReplicas = inSyncReplicas
-
+        // 计算发送了应答的副本数量，副本的偏移量超过requiredOffset就表示发送了应答
         def numAcks = curInSyncReplicas.count { r =>
           if (!r.isLocal)
             if (r.logEndOffset.messageOffset >= requiredOffset) {
@@ -345,23 +346,24 @@ class Partition(val topic: String,
             else
               false
           else
-            true /* also count the local (leader) replica */
+            true /* also count the local (leader) replica */ // 主副本也在ISR中
         }
 
         trace(s"$numAcks acks satisfied for ${topic}-${partitionId} with acks = -1")
 
         val minIsr = leaderReplica.log.get.config.minInSyncReplicas
 
+        // 当主副本的最高水位等于requiredOffset时，实际上就表示ISR的所有副本赶上了主副本
         if (leaderReplica.highWatermark.messageOffset >= requiredOffset) {
           /*
            * The topic may be configured not to accept messages if there are not enough replicas in ISR
            * in this scenario the request was already appended locally and then added to the purgatory before the ISR was shrunk
            */
-          if (minIsr <= curInSyncReplicas.size)
+          if (minIsr <= curInSyncReplicas.size) // ISR的所有备份副本都赶上了主副本
             (true, Errors.NONE)
-          else
+          else // 虽然所有备份副本都赶上了主副本，但ISR的副本数量还是不满足最小值得设置
             (true, Errors.NOT_ENOUGH_REPLICAS_AFTER_APPEND)
-        } else
+        } else // ISR的所有副本并没有全部都赶上主副本，不会更新主副本的最高水位，返回false
           (false, Errors.NONE)
       case None =>
         (false, Errors.NOT_LEADER_FOR_PARTITION)

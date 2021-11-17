@@ -96,10 +96,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * This class is not thread-safe. There should not be any add calls while advanceClock is executing.
  * It is caller's responsibility to enforce it. Simultaneous add calls are thread-safe.
  */
+// 时间轮包含了定时器全局的延迟队列，加入定时器任务到定时任务列表，列表会加入到延迟队列中
 @nonthreadsafe
 private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, taskCounter: AtomicInteger, queue: DelayQueue[TimerTaskList]) {
 
-  private[this] val interval = tickMs * wheelSize
+  private[this] val interval = tickMs * wheelSize // 时间轮的范围
+  // wheelSize 桶的数量 TimerTaskList(taskCounter) 共享全局的任务计数器
   private[this] val buckets = Array.tabulate[TimerTaskList](wheelSize) { _ => new TimerTaskList(taskCounter) }
 
   private[this] var currentTime = startMs - (startMs % tickMs) // rounding down to multiple of tickMs
@@ -108,6 +110,7 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
   // Therefore, it needs to be volatile due to the issue of Double-Checked Locking pattern with JVM
   @volatile private[this] var overflowWheel: TimingWheel = null
 
+  // 创建更高层的时间轮，底层时间轮的interval作为高层时间轮的tickMs
   private[this] def addOverflowWheel(): Unit = {
     synchronized {
       if (overflowWheel == null) {
@@ -122,19 +125,26 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
     }
   }
 
+  // 将定时任务条目加入时间轮，如果超过当前时间轮的范围，加入更高层的时间轮
   def add(timerTaskEntry: TimerTaskEntry): Boolean = {
     val expiration = timerTaskEntry.expirationMs
 
+
     if (timerTaskEntry.cancelled) {
       // Cancelled
+      // 被其他线程取消了，不再需要添加到定时器中
       false
     } else if (expiration < currentTime + tickMs) {
       // Already expired
+      // 已经超时了，不需要添加
       false
+
     } else if (expiration < currentTime + interval) {
+      // 还没超时，可以添加
       // Put in its own bucket
       val virtualId = expiration / tickMs
       val bucket = buckets((virtualId % wheelSize.toLong).toInt)
+      // 根据任务的失效时间，将任务添加到指定的桶中
       bucket.add(timerTaskEntry)
 
       // Set the bucket expiration time
@@ -148,6 +158,7 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
       }
       true
     } else {
+      // 大于interval 说明超过当前时间轮的大小，添加到更高层的时间轮
       // Out of the interval. Put it into the parent timer
       if (overflowWheel == null) addOverflowWheel()
       overflowWheel.add(timerTaskEntry)
@@ -155,8 +166,11 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
   }
 
   // Try to advance the clock
+  // 往前移动时间轮，主要是更新了当前时间轮的当前时间，下一步是重新加入定时任务条目
+  // 对于新的当前时间，更高层时间轮相同桶的定时任务条目会降级加入到低层时间轮不同的桶
   def advanceClock(timeMs: Long): Unit = {
     if (timeMs >= currentTime + tickMs) {
+      // 更新当前时间
       currentTime = timeMs - (timeMs % tickMs)
 
       // Try to advance the clock of the overflow wheel if present
