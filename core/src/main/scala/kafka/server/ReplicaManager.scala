@@ -244,9 +244,11 @@ class ReplicaManager(val config: KafkaConfig,
     val errorCode = Errors.NONE.code
     getPartition(topicPartition) match {
       case Some(_) =>
+        // 删除分区=true
         if (deletePartition) {
           val removedPartition = allPartitions.remove(topicPartition)
           if (removedPartition != null) {
+            // 删除日志文件
             removedPartition.delete() // this will delete the local log
             val topicHasPartitions = allPartitions.keys.exists(tp => topicPartition.topic == tp.topic)
             if (!topicHasPartitions)
@@ -264,7 +266,9 @@ class ReplicaManager(val config: KafkaConfig,
     errorCode
   }
 
+  // 副本管理器（ReplicaManager）停止副本
   def stopReplicas(stopReplicaRequest: StopReplicaRequest): (mutable.Map[TopicPartition, Short], Short) = {
+    // 副本状态改变的同步锁
     replicaStateChangeLock synchronized {
       val responseMap = new collection.mutable.HashMap[TopicPartition, Short]
       if(stopReplicaRequest.controllerEpoch() < controllerEpoch) {
@@ -275,6 +279,7 @@ class ReplicaManager(val config: KafkaConfig,
         val partitions = stopReplicaRequest.partitions.asScala
         controllerEpoch = stopReplicaRequest.controllerEpoch
         // First stop fetchers for all partitions, then stop the corresponding replicas
+        // 停止拉取线程
         replicaFetcherManager.removeFetcherForPartitions(partitions)
         for (topicPartition <- partitions){
           val errorCode = stopReplica(topicPartition, stopReplicaRequest.deletePartitions)

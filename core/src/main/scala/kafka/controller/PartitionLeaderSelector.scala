@@ -23,6 +23,7 @@ import kafka.utils.Logging
 import kafka.common.{LeaderElectionNotNeededException, TopicAndPartition, StateChangeFailedException, NoReplicaOnlineException}
 import kafka.server.{ConfigType, KafkaConfig}
 
+// 分区主副本的选举器接口，返回分区的主副本、ISR、副本集
 trait PartitionLeaderSelector {
 
   /**
@@ -46,18 +47,23 @@ trait PartitionLeaderSelector {
  * Replicas to receive LeaderAndIsr request = live assigned replicas
  * Once the leader is successfully registered in zookeeper, it updates the allLeaders cache
  */
+ // 分区从 下线状态 到 上线状态时，控制器为分区选举新的主副本
 class OfflinePartitionLeaderSelector(controllerContext: ControllerContext, config: KafkaConfig)
   extends PartitionLeaderSelector with Logging {
   this.logIdent = "[OfflinePartitionLeaderSelector]: "
 
   def selectLeader(topicAndPartition: TopicAndPartition, currentLeaderAndIsr: LeaderAndIsr): (LeaderAndIsr, Seq[Int]) = {
+    // 分区的所有副本
     controllerContext.partitionReplicaAssignment.get(topicAndPartition) match {
       case Some(assignedReplicas) =>
+        // 分区的存活副本集合
         val liveAssignedReplicas = assignedReplicas.filter(r => controllerContext.liveBrokerIds.contains(r))
+        // 当前ISR中存活的副本
         val liveBrokersInIsr = currentLeaderAndIsr.isr.filter(r => controllerContext.liveBrokerIds.contains(r))
         val currentLeaderEpoch = currentLeaderAndIsr.leaderEpoch
         val currentLeaderIsrZkPathVersion = currentLeaderAndIsr.zkVersion
         val newLeaderAndIsr =
+          // ISR都挂了，只能从存活额AR中选举了
           if (liveBrokersInIsr.isEmpty) {
             // Prior to electing an unclean (i.e. non-ISR) leader, ensure that doing so is not disallowed by the configuration
             // for unclean leader election.
@@ -69,11 +75,13 @@ class OfflinePartitionLeaderSelector(controllerContext: ControllerContext, confi
             }
             debug("No broker in ISR is alive for %s. Pick the leader from the alive assigned replicas: %s"
               .format(topicAndPartition, liveAssignedReplicas.mkString(",")))
+            // 分区的所有副本都挂了
             if (liveAssignedReplicas.isEmpty) {
               throw new NoReplicaOnlineException(("No replica for partition " +
                 "%s is alive. Live brokers are: [%s],".format(topicAndPartition, controllerContext.liveBrokerIds)) +
                 " Assigned replicas are: [%s]".format(assignedReplicas))
             } else {
+              // ISR都挂了，只能从存活额AR中选举了
               ControllerStats.uncleanLeaderElectionRate.mark()
               val newLeader = liveAssignedReplicas.head
               warn("No broker in ISR is alive for %s. Elect leader %d from live brokers %s. There's potential data loss."
@@ -81,6 +89,8 @@ class OfflinePartitionLeaderSelector(controllerContext: ControllerContext, confi
               new LeaderAndIsr(newLeader, currentLeaderEpoch + 1, List(newLeader), currentLeaderIsrZkPathVersion + 1)
             }
           } else {
+            // 当前ISR中只要有一个副本存活，就不会丢数据
+            // 从分区的存活副本集合(liveAssignedReplicas)中选取在当前ISR集合中的副本(liveBrokersInIsr)
             val liveReplicasInIsr = liveAssignedReplicas.filter(r => liveBrokersInIsr.contains(r))
             val newLeader = liveReplicasInIsr.head
             debug("Some broker in ISR is alive for %s. Select %d from ISR %s to be the leader."
@@ -100,6 +110,7 @@ class OfflinePartitionLeaderSelector(controllerContext: ControllerContext, confi
  * New isr = current isr
  * Replicas to receive LeaderAndIsr request = reassigned replicas
  */
+// 重新分配分区时，选举主副本， 假设当前ISR=OAR+RAR
 class ReassignedPartitionLeaderSelector(controllerContext: ControllerContext) extends PartitionLeaderSelector with Logging {
   this.logIdent = "[ReassignedPartitionLeaderSelector]: "
 
@@ -107,15 +118,17 @@ class ReassignedPartitionLeaderSelector(controllerContext: ControllerContext) ex
    * The reassigned replicas are already in the ISR when selectLeader is called.
    */
   def selectLeader(topicAndPartition: TopicAndPartition, currentLeaderAndIsr: LeaderAndIsr): (LeaderAndIsr, Seq[Int]) = {
+    // 重新分配分区的RAR,从RAR中选举主副本，注意，RAR已经在ISR中
     val reassignedInSyncReplicas = controllerContext.partitionsBeingReassigned(topicAndPartition).newReplicas
     val currentLeaderEpoch = currentLeaderAndIsr.leaderEpoch
     val currentLeaderIsrZkPathVersion = currentLeaderAndIsr.zkVersion
     val aliveReassignedInSyncReplicas = reassignedInSyncReplicas.filter(r => controllerContext.liveBrokerIds.contains(r) &&
-                                                                             currentLeaderAndIsr.isr.contains(r))
+                                                                             currentLeaderAndIsr.isr.contains(r)) // （OAR+RAR）一定包括RAR
+    // 选举RAR中的第一个副本作为主副本
     val newLeaderOpt = aliveReassignedInSyncReplicas.headOption
     newLeaderOpt match {
-      case Some(newLeader) => (new LeaderAndIsr(newLeader, currentLeaderEpoch + 1, currentLeaderAndIsr.isr,
-        currentLeaderIsrZkPathVersion + 1), reassignedInSyncReplicas)
+      case Some(newLeader) => (new LeaderAndIsr(newLeader, currentLeaderEpoch + 1, currentLeaderAndIsr.isr,// (OAR+RAR)
+        currentLeaderIsrZkPathVersion + 1), reassignedInSyncReplicas) // 作为selectLeader方法的第二个参数，只返回RAR
       case None =>
         reassignedInSyncReplicas.size match {
           case 0 =>
@@ -134,12 +147,16 @@ class ReassignedPartitionLeaderSelector(controllerContext: ControllerContext) ex
  * New isr = current isr;
  * Replicas to receive LeaderAndIsr request = assigned replicas
  */
+// 最优副本选举类  选取第一个副本作为主副本 保证分区的主副本均匀分布在所有的代理节点上
 class PreferredReplicaPartitionLeaderSelector(controllerContext: ControllerContext) extends PartitionLeaderSelector
 with Logging {
   this.logIdent = "[PreferredReplicaPartitionLeaderSelector]: "
 
+  // 选举最优的副本作为分区的主副本，除了监听器，还有一个定时线程也会调度该方法
   def selectLeader(topicAndPartition: TopicAndPartition, currentLeaderAndIsr: LeaderAndIsr): (LeaderAndIsr, Seq[Int]) = {
+    // 分区的所有副本
     val assignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
+    // 最优副本，即第一个副本
     val preferredReplica = assignedReplicas.head
     // check if preferred replica is the current leader
     val currentLeader = controllerContext.partitionLeadershipInfo(topicAndPartition).leaderAndIsr.leader
@@ -150,6 +167,7 @@ with Logging {
       info("Current leader %d for partition %s is not the preferred replica.".format(currentLeader, topicAndPartition) +
         " Triggering preferred replica leader election")
       // check if preferred replica is not the current leader and is alive and in the isr
+      // 当前主副本不是最优副本，最优副本是存活的，并且最优副本在当前ISR集合中
       if (controllerContext.liveBrokerIds.contains(preferredReplica) && currentLeaderAndIsr.isr.contains(preferredReplica)) {
         (new LeaderAndIsr(preferredReplica, currentLeaderAndIsr.leaderEpoch + 1, currentLeaderAndIsr.isr,
           currentLeaderAndIsr.zkVersion + 1), assignedReplicas)

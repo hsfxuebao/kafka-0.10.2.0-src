@@ -38,6 +38,7 @@ import scala.collection.JavaConverters._
 import scala.collection.{Set, mutable}
 import scala.collection.mutable.HashMap
 
+// 控制器的网络通道管理器保存了所有存活的代理节点的网络连接
 class ControllerChannelManager(controllerContext: ControllerContext, config: KafkaConfig, time: Time, metrics: Metrics, threadNamePrefix: Option[String] = None) extends Logging {
   protected val brokerStateInfo = new HashMap[Int, ControllerBrokerStateInfo]
   private val brokerLock = new Object
@@ -86,6 +87,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
     }
   }
 
+  // 添加新的代理节点，建立控制器到新代理节点的网络连接，并启动请求发送线程
   private def addNewBroker(broker: Broker) {
     val messageQueue = new LinkedBlockingQueue[QueueItem]
     debug("Controller %d trying to connect to broker %d".format(config.brokerId, broker.id))
@@ -133,6 +135,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
     brokerStateInfo.put(broker.id, new ControllerBrokerStateInfo(networkClient, brokerNode, messageQueue, requestThread))
   }
 
+  // 添加旧的代理节点，取消控制器到新代理节点的网络连接，并关闭请求发送线程
   private def removeExistingBroker(brokerState: ControllerBrokerStateInfo) {
     try {
       brokerState.networkClient.close()
@@ -246,6 +249,7 @@ class RequestSendThread(val controllerId: Int,
 
 }
 
+// 控制器以批量方式发送请求给代理节点，每个代理节点的请求包括多个分区
 class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging {
   val controllerContext = controller.controllerContext
   val controllerId: Int = controller.config.brokerId
@@ -276,6 +280,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
     updateMetadataRequestPartitionInfoMap.clear()
   }
 
+  // 将LeaderAndIsr 请求添加到代理节点，但还没开始发送
   def addLeaderAndIsrRequestForBrokers(brokerIds: Seq[Int], topic: String, partition: Int,
                                        leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
                                        replicas: Seq[Int], callback: AbstractResponse => Unit = null) {
@@ -286,6 +291,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
       result.put(topicPartition, PartitionStateInfo(leaderIsrAndControllerEpoch, replicas.toSet))
     }
 
+    // 更新了分区的信息，也需要更新主题的元数据，因为主题的元数据信息包括每个分区的信息
     addUpdateMetadataRequestForBrokers(controllerContext.liveOrShuttingDownBrokerIds.toSeq,
                                        Set(TopicAndPartition(topic, partition)))
   }
@@ -341,6 +347,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
     controller.deleteTopicManager.partitionsToBeDeleted.foreach(partition => updateMetadataRequestPartitionInfo(partition, beingDeleted = true))
   }
 
+  // 发送请求给代理节点
   def sendRequestsToBrokers(controllerEpoch: Int) {
     try {
       leaderAndIsrRequestMap.foreach { case (broker, partitionStateInfos) =>
@@ -366,6 +373,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
             Builder(controllerId, controllerEpoch, partitionStates.asJava, leaders.asJava)
         controller.sendRequest(broker, ApiKeys.LEADER_AND_ISR, leaderAndIsrRequest, null)
       }
+      // 处理完一批请求，清空数据
       leaderAndIsrRequestMap.clear()
 
       updateMetadataRequestPartitionInfoMap.foreach(p => stateChangeLogger.trace(("Controller %d epoch %d sending UpdateMetadata request %s " +

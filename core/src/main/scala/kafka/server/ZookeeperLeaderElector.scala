@@ -47,7 +47,7 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
 
   def startup {
     inLock(controllerContext.controllerLock) {
-      // todo 对zk 上面的/controller某个目录 注册监听器
+      // todo 对zk 上面的/controller某个目录 注册监听器(leader数据改变监听器)
       controllerContext.zkUtils.zkClient.subscribeDataChanges(electionPath, leaderChangeListener)
       // todo  选举
       elect
