@@ -415,6 +415,7 @@ class GroupMetadataManager(val brokerId: Int,
         warn(s"Attempted to load offsets and group metadata from $topicPartition, but found no log")
 
       case Some(log) =>
+        // 从第一个日志分段开始
         var currOffset = log.logStartOffset
         val buffer = ByteBuffer.allocate(config.loadBufferSize)
         // loop breaks if leader changes at any time during the load, since getHighWatermark is -1
@@ -423,6 +424,7 @@ class GroupMetadataManager(val brokerId: Int,
         val loadedGroups = mutable.Map[String, GroupMetadata]()
         val removedGroups = mutable.Set[String]()
 
+        // 直到最高水位
         while (currOffset < highWaterMark && !shuttingDown.get()) {
           buffer.clear()
           val fileRecords = log.read(currOffset, config.loadBufferSize, maxOffset = None, minOneMessage = true)
@@ -433,7 +435,9 @@ class GroupMetadataManager(val brokerId: Int,
             val record = entry.record
             require(record.hasKey, "Group metadata/offset entry key should not be null")
 
+            // 读取日志分段的每条消息
             GroupMetadataManager.readMessageKey(record.key) match {
+                // 消费者提交的偏移量
               case offsetKey: OffsetKey =>
                 // load offset
                 val key = offsetKey.key
@@ -446,6 +450,7 @@ class GroupMetadataManager(val brokerId: Int,
                   removedOffsets.remove(key)
                 }
 
+                // 消费组元数据
               case groupMetadataKey: GroupMetadataKey =>
                 // load group metadata
                 val groupId = groupMetadataKey.key
@@ -463,6 +468,7 @@ class GroupMetadataManager(val brokerId: Int,
                 throw new IllegalStateException(s"Unexpected message key $unknownKey while loading offsets and group metadata")
             }
 
+            // 处理下一条消息
             currOffset = entry.nextOffset
           }
         }
@@ -472,9 +478,11 @@ class GroupMetadataManager(val brokerId: Int,
           .mapValues(_.map { case (groupTopicPartition, offset) => (groupTopicPartition.topicPartition, offset)} )
           .partition { case (group, _) => loadedGroups.contains(group) }
 
+        // 消费组元数据
         loadedGroups.values.foreach { group =>
           val offsets = groupOffsets.getOrElse(group.groupId, Map.empty[TopicPartition, OffsetAndMetadata])
           loadGroup(group, offsets)
+          // 调用回调方法
           onGroupLoaded(group)
         }
 

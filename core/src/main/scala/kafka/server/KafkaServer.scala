@@ -405,15 +405,17 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           false)
       }
 
-      var shutdownSucceeded: Boolean = false
+      var shutdownSucceeded: Boolean = false  // 是否关闭成功
 
       try {
 
-        var remainingRetries = retries
+        var remainingRetries = retries  // 剩余的重试次数
         var prevController: Broker = null
         var ioException = false
 
+        // 不成功且还有机会重试
         while (!shutdownSucceeded && remainingRetries > 0) {
+          // 剩余次数-1
           remainingRetries = remainingRetries - 1
 
           import NetworkClientBlockingOps._
@@ -422,6 +424,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
           // Get the current controller info. This is to ensure we use the most recent info to issue the
           // controlled shutdown request
+          // 获取集群的控制器
           val controllerId = zkUtils.getController()
           zkUtils.getBrokerInfo(controllerId) match {
             case Some(broker) =>
@@ -448,12 +451,14 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 throw new SocketTimeoutException(s"Failed to connect within $socketTimeoutMs ms")
 
               // send the controlled shutdown request
+              // 向控制器发送请求，请求内容是被关闭的节点
               val controlledShutdownRequest = new ControlledShutdownRequest.Builder(config.brokerId)
               val request = networkClient.newClientRequest(node(prevController).idString, controlledShutdownRequest,
                 time.milliseconds(), true)
               val clientResponse = networkClient.blockingSendAndReceive(request)(time)
 
               val shutdownResponse = clientResponse.responseBody.asInstanceOf[ControlledShutdownResponse]
+              // 剩余分区为空，关闭成功
               if (shutdownResponse.errorCode == Errors.NONE.code && shutdownResponse.partitionsRemaining.isEmpty) {
                 shutdownSucceeded = true
                 info("Controlled shutdown succeeded")
@@ -588,9 +593,11 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     try {
       info("shutting down")
 
+      // kafka服务启动成功，并且开启了isStartingUp=false
       if(isStartingUp.get)
         throw new IllegalStateException("Kafka server is still starting up, cannot shut down!")
 
+      // 接下来依次关闭网络服务端，副本管理器，消费组的协调者，控制器等其他组件
       val canShutdown = isShuttingDown.compareAndSet(false, true)
       if (canShutdown && shutdownLatch.getCount > 0) {
         CoreUtils.swallow(controlledShutdown())

@@ -105,7 +105,7 @@ class Partition(val topic: String,
   def isUnderReplicated: Boolean =
     isLeaderReplicaLocal && inSyncReplicas.size < assignedReplicas.size
 
-  // 分区Partition根据给定的副本编号创建副本Replica
+  // 分区Partition根据给定的副本编号创建副本Replica，如果是本地副本，副本有日志文件
   def getOrCreateReplica(replicaId: Int = localBrokerId): Replica = {
     assignedReplicaMap.getAndMaybePut(replicaId, {
       // 本地副本，需要创建物理层日志
@@ -165,7 +165,7 @@ class Partition(val topic: String,
    * from the time when this broker was the leader last time) and setting the new leader and ISR.
    * If the leader replica id does not change, return false to indicate the replica manager.
    */
-    // 改变主副本，也可能改变ISR
+    // 改变主副本，也可能改变ISR，根据分区状态创建主副本，更新分区对象的主副本、AR、ISR
   def makeLeader(controllerId: Int, partitionStateInfo: PartitionState, correlationId: Int): Boolean = {
     val (leaderHWIncremented, isNewLeader) = inWriteLock(leaderIsrUpdateLock) {
       val allReplicas = partitionStateInfo.replicas.asScala.map(_.toInt)
@@ -182,10 +182,10 @@ class Partition(val topic: String,
       zkVersion = partitionStateInfo.zkVersion
       val isNewLeader =
         if (leaderReplicaIdOpt.isDefined && leaderReplicaIdOpt.get == localBrokerId) {
-          false
+          false // 返回false,不需要更新主副本编号
         } else {
           leaderReplicaIdOpt = Some(localBrokerId)
-          true
+          true // 返回true,更新主副本编号
         }
       val leaderReplica = getReplica().get
       val curLeaderLogEndOffset = leaderReplica.logEndOffset.messageOffset
@@ -206,8 +206,9 @@ class Partition(val topic: String,
       (maybeIncrementLeaderHW(leaderReplica), isNewLeader)
     }
     // some delayed operations may be unblocked after HW changed
+      // 如果增加 分区的HW
     if (leaderHWIncremented)
-      tryCompleteDelayedRequests()
+      tryCompleteDelayedRequests() // 尝试完成延迟的请求
     isNewLeader
   }
 
@@ -215,6 +216,7 @@ class Partition(val topic: String,
    *  Make the local replica the follower by setting the new leader and ISR to empty
    *  If the leader replica id does not change, return false to indicate the replica manager
    */
+    // 根据分区状态创建备份副本
   def makeFollower(controllerId: Int, partitionStateInfo: PartitionState, correlationId: Int): Boolean = {
     inWriteLock(leaderIsrUpdateLock) {
       val allReplicas = partitionStateInfo.replicas.asScala.map(_.toInt)
@@ -226,6 +228,7 @@ class Partition(val topic: String,
       allReplicas.foreach(r => getOrCreateReplica(r))
       // remove assigned replicas that have been removed by the controller
       (assignedReplicas.map(_.brokerId) -- allReplicas).foreach(removeReplica)
+      // 备份副本所在分区没有ISR集合
       inSyncReplicas = Set.empty[Replica]
       leaderEpoch = partitionStateInfo.leaderEpoch
       zkVersion = partitionStateInfo.zkVersion

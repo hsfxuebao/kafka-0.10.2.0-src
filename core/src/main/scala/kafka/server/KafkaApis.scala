@@ -135,6 +135,7 @@ class KafkaApis(val requestChannel: RequestChannel, // 请求通道
       request.apiLocalCompleteTimeMs = time.milliseconds
   }
 
+  // 处理LeaderAndIsr请求，交给副本管理器处理
   def handleLeaderAndIsrRequest(request: RequestChannel.Request) {
     // ensureTopicExists is only for client facing requests
     // We can't have the ensureTopicExists check here since the controller sends it as an advisory to all brokers so they
@@ -143,6 +144,7 @@ class KafkaApis(val requestChannel: RequestChannel, // 请求通道
     val leaderAndIsrRequest = request.body.asInstanceOf[LeaderAndIsrRequest]
 
     try {
+      // 回调方法，如果是内部主题，通过消费组的协调者处理消费组的迁移
       def onLeadershipChange(updatedLeaders: Iterable[Partition], updatedFollowers: Iterable[Partition]) {
         // for each new leader or follower, call coordinator to handle consumer group migration.
         // this callback is invoked under the replica state change lock to ensure proper order of

@@ -519,10 +519,12 @@ class GroupCoordinator(val brokerId: Int,
     groupManager.cleanupGroupMetadata(Some(topicPartitions))
   }
 
+  // 消费组的协调者在删除元数据后，处理延迟请求相关的操作
   private def onGroupUnloaded(group: GroupMetadata) {
     group synchronized {
       info(s"Unloading group metadata for ${group.groupId} with generation ${group.generationId}")
       val previousState = group.currentState
+      // 消费组的状态转为Dead失败
       group.transitionTo(Dead)
 
       previousState match {
@@ -534,28 +536,33 @@ class GroupCoordinator(val brokerId: Int,
               member.awaitingJoinCallback = null
             }
           }
+          // 所有消费者共用一个"延迟的加入"，都发送完"加入组响应"后执行
           joinPurgatory.checkAndComplete(GroupKey(group.groupId))
 
         case Stable | AwaitingSync =>
           for (member <- group.allMemberMetadata) {
+            // 返回SyncGroup响应
             if (member.awaitingSyncCallback != null) {
               member.awaitingSyncCallback(Array.empty[Byte], Errors.NOT_COORDINATOR_FOR_GROUP.code)
               member.awaitingSyncCallback = null
             }
+            // 每个消费者都有一个"延迟的心跳"，每个消费者发送完都执行
             heartbeatPurgatory.checkAndComplete(MemberKey(member.groupId, member.memberId))
           }
       }
     }
   }
 
+  // 消费组的协调者在加载元数据后，处理延迟请求相关的操作
   private def onGroupLoaded(group: GroupMetadata) {
     group synchronized {
       info(s"Loading group metadata for ${group.groupId} with generation ${group.generationId}")
-      assert(group.is(Stable) || group.is(Empty))
+      assert(group.is(Stable) || group.is(Empty)) // 确保消费组状态已经是"稳定"
       group.allMemberMetadata.foreach(completeAndScheduleNextHeartbeatExpiration(group, _))
     }
   }
 
+  // 消费组的协调者（GroupCoordinator）处理消费组的数据迁移
   def handleGroupImmigration(offsetTopicPartitionId: Int) {
     groupManager.loadGroupsForPartition(offsetTopicPartitionId, onGroupLoaded)
   }

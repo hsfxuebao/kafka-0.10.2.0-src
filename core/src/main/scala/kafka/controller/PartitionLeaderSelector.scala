@@ -197,10 +197,13 @@ class ControlledShutdownLeaderSelector(controllerContext: ControllerContext)
     val currentLeader = currentLeaderAndIsr.leader
 
     val assignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
+    // liveOrShuttingDownBrokerIds 包括存活的所有代理节点，以及即将关闭的代理节点
     val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
     val liveAssignedReplicas = assignedReplicas.filter(r => liveOrShuttingDownBrokerIds.contains(r))
 
+    // shuttingDownBrokerIds 只包括即将关闭的代理节点，新的ISR会过滤即将关闭的节点
     val newIsr = currentLeaderAndIsr.isr.filter(brokerId => !controllerContext.shuttingDownBrokerIds.contains(brokerId))
+    // 新的ISR newIsr和新的主副本newLeader 都不包括即将关闭的节点
     liveAssignedReplicas.find(newIsr.contains) match {
       case Some(newLeader) =>
         debug("Partition %s : current leader = %d, new leader = %d".format(topicAndPartition, currentLeader, newLeader))

@@ -36,12 +36,14 @@ import org.apache.kafka.common.requests.{MetadataResponse, PartitionState, Updat
  *  A cache for the state (e.g., current leader) of each partition. This cache is updated through
  *  UpdateMetadataRequest from the controller. Every broker maintains the same cache, asynchronously.
  */
+// 元数据缓存的更新与读取操作
 private[server] class MetadataCache(brokerId: Int) extends Logging {
   private val stateChangeLogger = KafkaController.stateChangeLogger
   private val cache = mutable.Map[String, mutable.Map[Int, PartitionStateInfo]]()
   private var controllerId: Option[Int] = None
   private val aliveBrokers = mutable.Map[Int, Broker]()
   private val aliveNodes = mutable.Map[Int, collection.Map[ListenerName, Node]]()
+  // 读写锁
   private val partitionMetadataLock = new ReentrantReadWriteLock()
 
   this.logIdent = s"[Kafka Metadata Cache on broker $brokerId] "
@@ -110,10 +112,13 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
   }
 
   // errorUnavailableEndpoints exists to support v0 MetadataResponses
+  // 获取指定主题的元数据
   def getTopicMetadata(topics: Set[String], listenerName: ListenerName, errorUnavailableEndpoints: Boolean = false): Seq[MetadataResponse.TopicMetadata] = {
     inReadLock(partitionMetadataLock) {
       topics.toSeq.flatMap { topic =>
+        // 获取元数据缓存指定主题下每个分区对应的状态信息
         getPartitionMetadata(topic, listenerName, errorUnavailableEndpoints).map { partitionMetadata =>
+          // 将分区编号和分区状态信息，构造成分区的元数据
           new MetadataResponse.TopicMetadata(Errors.NONE, topic, Topic.isInternal(topic), partitionMetadata.toBuffer.asJava)
         }
       }
@@ -156,6 +161,7 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
   def getControllerId: Option[Int] = controllerId
 
   // This method returns the deleted TopicPartitions received from UpdateMetadataRequest
+  // 更新元数据缓存
   def updateCache(correlationId: Int, updateMetadataRequest: UpdateMetadataRequest): Seq[TopicPartition] = {
     inWriteLock(partitionMetadataLock) {
       controllerId = updateMetadataRequest.controllerId match {

@@ -419,10 +419,12 @@ public class Sender implements Runnable {
             if (error != Errors.NONE)
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
         }
+        // 异常信息是"无效的元数据"InvalidMetadataException
         if (error.exception() instanceof InvalidMetadataException) {
             if (error.exception() instanceof UnknownTopicOrPartitionException)
                 log.warn("Received unknown topic or partition error in produce request on partition {}. The " +
                         "topic/partition may not exist or the user may not have Describe access to it", batch.topicPartition);
+            // 强制拉取最新的元数据
             metadata.requestUpdate();
         }
 

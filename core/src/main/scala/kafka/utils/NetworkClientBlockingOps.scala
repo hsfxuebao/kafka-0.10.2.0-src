@@ -27,6 +27,7 @@ import org.apache.kafka.common.utils.Time
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
+// 阻塞式地发送请求和接收响应（隐式方法）
 object NetworkClientBlockingOps {
   implicit def networkClientBlockingOps(client: NetworkClient): NetworkClientBlockingOps =
     new NetworkClientBlockingOps(client)
@@ -104,6 +105,7 @@ class NetworkClientBlockingOps(val client: NetworkClient) extends AnyVal {
    * care.
    */
   def blockingSendAndReceive(request: ClientRequest)(implicit time: Time): ClientResponse = {
+    // 发送请求
     client.send(request, time.milliseconds())
     pollContinuously { responses =>
       val response = responses.find { response =>
@@ -127,15 +129,16 @@ class NetworkClientBlockingOps(val client: NetworkClient) extends AnyVal {
     * This method is useful for implementing blocking behaviour on top of the non-blocking `NetworkClient`, use it with
     * care.
     */
-  private def pollContinuously[T](collect: Seq[ClientResponse] => Option[T])(implicit time: Time): T = {
+  private def pollContinuously[T](collect: Seq[ClientResponse] => Option[T])(implicit time: Time): T = { // 隐式参数
 
     @tailrec
     def recursivePoll: T = {
       // rely on request timeout to ensure we don't block forever
-      val responses = client.poll(Long.MaxValue, time.milliseconds()).asScala
+      // 虽然轮询方法的超时参数是最大值，但限于请求的超时时间阈值，这里并不会永远阻塞
+      val responses = client.poll(Long.MaxValue, time.milliseconds()).asScala // 轮询
       collect(responses) match {
-        case Some(result) => result
-        case None => recursivePoll
+        case Some(result) => result   // 获取到结果，可以立即返回
+        case None => recursivePoll  // 没有获取到结果，继续递归调用
       }
     }
 

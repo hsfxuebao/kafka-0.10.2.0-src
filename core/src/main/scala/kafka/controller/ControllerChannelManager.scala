@@ -348,6 +348,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends  Logging
   }
 
   // 发送请求给代理节点
+  // 控制器的通道管理器发送leaderAndIsr和更新元数据的请求给代理节点，不需要响应结果
   def sendRequestsToBrokers(controllerEpoch: Int) {
     try {
       leaderAndIsrRequestMap.foreach { case (broker, partitionStateInfos) =>

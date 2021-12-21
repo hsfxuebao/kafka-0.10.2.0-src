@@ -260,6 +260,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
    * @param id Id of the broker to shutdown.
    * @return The number of partitions that the broker still leads.
    */
+    // 服务端处理ControllerShutdown请求
   def shutdownBroker(id: Int): Set[TopicAndPartition] = {
 
     if (!isActive) {
@@ -272,7 +273,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
       inLock(controllerContext.controllerLock) {
         if (!controllerContext.liveOrShuttingDownBrokerIds.contains(id))
           throw new BrokerNotAvailableException("Broker id %d does not exist.".format(id))
-
+        // 添加到即将关闭的代理节点列表
         controllerContext.shuttingDownBrokerIds.add(id)
         debug("All shutting down brokers: " + controllerContext.shuttingDownBrokerIds.mkString(","))
         debug("Live brokers: " + controllerContext.liveBrokerIds.mkString(","))
@@ -284,6 +285,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
             .map(topicAndPartition => (topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition).size))
         }
 
+      // 副本数大于1，切分区的主副本还在即将关闭的代理节点上，返回值不为空
       allPartitionsAndReplicationFactorOnBroker.foreach {
         case(topicAndPartition, replicationFactor) =>
           // Move leadership serially to relinquish lock.
@@ -293,9 +295,10 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
                 if (currLeaderIsrAndControllerEpoch.leaderAndIsr.leader == id) {
                   // If the broker leads the topic partition, transition the leader and update isr. Updates zk and
                   // notifies all affected brokers
+                  // 代理节点是分区的主副本，转移主副本、更新ISR、更新zk、通知其他受影响的代理节点
                   partitionStateMachine.handleStateChanges(Set(topicAndPartition), OnlinePartition,
                     controlledShutdownPartitionLeaderSelector)
-                } else {
+                } else { // 如果是备份副本，停止副本，然后将副本状态转为下线
                   // Stop the replica first. The state change below initiates ZK changes which should take some time
                   // before which the stop replica request should be completed (in most cases)
                   try {
@@ -778,6 +781,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, val brokerState
    * it shuts down the partition and replica state machines. If not, those are a no-op. In addition to that, it also
    * shuts down the controller channel manager, if one exists (i.e. if it was the current controller)
    */
+    // 如果代理节点是当前的主控制器，则关闭状态机，否则不会有任何实际的操作
   def shutdown() = {
     inLock(controllerContext.controllerLock) {
       isRunning = false
